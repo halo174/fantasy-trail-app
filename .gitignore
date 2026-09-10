@@ -1,7 +1,9 @@
 venv/
+cache/
 __pycache__/
 *.pyc
 .env
+*.graphml
 .DS_Store
 *.egg-info/
 .ipynb_checkpoints/
