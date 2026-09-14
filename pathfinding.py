@@ -82,3 +82,14 @@ def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, to
         return None, None, steps
 
     return best_path, best_length, steps
+
+def find_path_with_restarts(G, start_node, end_node, target_distance, tolerance=0.2, steps_per_attempt=20000, max_restarts=10):
+    for attempt in range(max_restarts):
+        path, length, steps = find_path_matching_distance_dfs(
+            G, start_node, end_node, target_distance, tolerance, max_steps=steps_per_attempt
+        )
+        if path is not None:
+            print(f"  Succeeded on restart {attempt + 1}, {steps} steps")
+            return path, length, steps
+    print(f"  Failed after {max_restarts} restarts")
+    return None, None, None

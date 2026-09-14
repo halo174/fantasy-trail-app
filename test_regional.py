@@ -3,7 +3,7 @@ import osmnx as ox
 import networkx as nx
 
 from graph_utils import to_simple_graph
-from pathfinding import find_path_matching_distance_dfs
+from pathfinding import find_path_matching_distance_dfs, find_path_with_restarts
 
 G_multi = ox.load_graphml("madison_regional_walk_network.graphml")
 G = to_simple_graph(G_multi)
@@ -24,3 +24,12 @@ target = shortest * 1.5
 start_time = time.time()
 path, length, steps = find_path_matching_distance_dfs(G, node_a, node_b, target)
 print(f"Search took {time.time() - start_time:.2f}s, found {length:.1f}m after {steps} steps")
+
+for multiplier in [3, 5]:
+    target = shortest * multiplier
+    print(f"\n--- Target: {target:.1f}m ({multiplier}x) ---")
+    start_time = time.time()
+    path, length, steps = find_path_with_restarts(G, node_a, node_b, target)
+    print(f"Total time: {time.time() - start_time:.2f}s")
+
+    
