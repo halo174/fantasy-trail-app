@@ -3,9 +3,9 @@ import osmnx as ox
 import networkx as nx
 
 from graph_utils import to_simple_graph
-from pathfinding import find_path_matching_distance_dfs, find_path_with_restarts
+from pathfinding import find_path_with_restarts
 
-G_multi = ox.load_graphml("madison_regional_walk_network.graphml")
+G_multi = ox.load_graphml("madison_50mi_tiled_walk_network.graphml")
 G = to_simple_graph(G_multi)
 
 point_a = (43.0455, -89.4128)  # near the Arboretum
@@ -22,14 +22,16 @@ print(f"Direct shortest: {shortest:.1f}m")
 target = shortest * 1.5
 
 start_time = time.time()
-path, length, steps = find_path_matching_distance_dfs(G, node_a, node_b, target)
-print(f"Search took {time.time() - start_time:.2f}s, found {length:.1f}m after {steps} steps")
+path, length, steps = find_path_with_restarts(G, node_a, node_b, target)
+if path is not None:
+    print(f"Search took {time.time() - start_time:.2f}s, found {length:.1f}m after {steps} steps")
+else:
+    print(f"Failed to find valid path after {time.time() - start_time:.2f}s")
 
-for multiplier in [3, 5]:
-    target = shortest * multiplier
-    print(f"\n--- Target: {target:.1f}m ({multiplier}x) ---")
+for target in [20000, 30000]:
+    print(f"\n--- Target: {target}m ---")
     start_time = time.time()
     path, length, steps = find_path_with_restarts(G, node_a, node_b, target)
     print(f"Total time: {time.time() - start_time:.2f}s")
-
-    
+    if path is not None:
+        print(f"Found: {length:.1f}m")
