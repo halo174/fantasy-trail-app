@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Fantasy Trail</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    body { margin: 0; }
+    #map { height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    const map = L.map("map").setView([43.06, -89.40], 13);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+    }).addTo(map);
+
+    fetch("http://127.0.0.1:8000/route", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start_lat: 43.0455,
+        start_lon: -89.4128,
+        end_lat: 43.0850,
+        end_lon: -89.3900,
+        target_distance_m: 8000,
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        const line = L.polyline(data.path, { color: "red", weight: 4 }).addTo(map);
+        map.fitBounds(line.getBounds());
+        console.log(`Distance: ${data.distance_m}m`);
+      });
+  </script>
+</body>
+</html>

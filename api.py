@@ -3,6 +3,7 @@ from fastapi import FastAPI
 import osmnx as ox
 from fastapi import HTTPException
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 from pathfinding import find_path_with_restarts
 
@@ -23,6 +24,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")
