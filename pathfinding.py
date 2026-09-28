@@ -1,12 +1,13 @@
 import random
-from graph_utils import precompute_distances_to_end
+from graph_utils import precompute_distances_to_end, edge_cost
 
 
 def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, tolerance=0.2, max_steps=20000):
     """
     Randomized DFS with backtracking, guided by a Dijkstra-based feasibility
-    bound, to find a simple path from start_node to end_node whose length
-    is close to target_distance.
+    bound on real distance. Among feasible neighbors, trail-type edges are
+    weighted more heavily so the search prefers trails without ever ruling
+    out roads outright.
     """
     dist_to_end = precompute_distances_to_end(G, end_node)
 
@@ -18,7 +19,7 @@ def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, to
     traveled = [0.0]
     options_stack = []
 
-    def get_valid_options(current, traveled_so_far):
+    def get_valid_options(current, length_so_far):
         neighbors = list(G.neighbors(current))
         valid = []
         for n in neighbors:
@@ -26,11 +27,11 @@ def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, to
                 continue
             if n not in dist_to_end:
                 continue
-            edge_length = G[current][n]["length"]
-            remaining_budget = target_distance - (traveled_so_far + edge_length)
+            data = G[current][n]
+            edge_length = data["length"]
+            remaining_budget = target_distance - (length_so_far + edge_length)
             if remaining_budget + (target_distance * tolerance) >= dist_to_end[n]:
-                valid.append((n, edge_length))
-        random.shuffle(valid)
+                valid.append((n, edge_length, edge_cost(data)))
         return valid
 
     options_stack.append(get_valid_options(start_node, 0.0))
@@ -43,14 +44,14 @@ def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, to
     while path and steps < max_steps:
         steps += 1
         current = path[-1]
-        current_traveled = traveled[-1]
+        current_length = traveled[-1]
 
         if current == end_node:
-            diff = abs(current_traveled - target_distance)
+            diff = abs(current_length - target_distance)
             if diff < best_diff:
                 best_diff = diff
                 best_path = list(path)
-                best_length = current_traveled
+                best_length = current_length
             if diff <= target_distance * tolerance:
                 return best_path, best_length, steps
             visited.remove(path.pop())
@@ -58,7 +59,7 @@ def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, to
             options_stack.pop()
             continue
 
-        if current_traveled > target_distance * (1 + tolerance) * 1.5:
+        if current_length > target_distance * (1 + tolerance) * 1.5:
             visited.remove(path.pop())
             traveled.pop()
             options_stack.pop()
@@ -70,12 +71,16 @@ def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, to
             options_stack.pop()
             continue
 
-        next_node, edge_length = options_stack[-1].pop()
+        options = options_stack[-1]
+        weights = [1.0 / c for _, _, c in options]
+        idx = random.choices(range(len(options)), weights=weights, k=1)[0]
+        next_node, edge_length, _ = options.pop(idx)
+
         path.append(next_node)
         visited.add(next_node)
-        new_traveled = current_traveled + edge_length
-        traveled.append(new_traveled)
-        options_stack.append(get_valid_options(next_node, new_traveled))
+        new_length = current_length + edge_length
+        traveled.append(new_length)
+        options_stack.append(get_valid_options(next_node, new_length))
 
     if best_path is None:
         print(f"  No path found after {steps} steps")
