@@ -5,11 +5,29 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
-    body { margin: 0; }
+    body { margin: 0; font-family: sans-serif; }
     #map { height: 100vh; }
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 50px;
+      z-index: 1000;
+      background: white;
+      padding: 10px;
+      border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    }
+    #controls input { width: 100px; }
   </style>
 </head>
 <body>
+  <div id="controls">
+    <div>Click map to set start, click again for end</div>
+    <div id="status">Start: none, End: none</div>
+    Target distance (m): <input id="target" type="number" value="8000" />
+    <button id="find">Find route</button>
+    <button id="reset">Reset points</button>
+  </div>
   <div id="map"></div>
   <script>
     const map = L.map("map").setView([43.06, -89.40], 13);
@@ -17,23 +35,83 @@
       attribution: "&copy; OpenStreetMap contributors",
     }).addTo(map);
 
-    fetch("http://127.0.0.1:8000/route", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        start_lat: 43.0455,
-        start_lon: -89.4128,
-        end_lat: 43.0850,
-        end_lon: -89.3900,
-        target_distance_m: 8000,
-      }),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        const line = L.polyline(data.path, { color: "red", weight: 4 }).addTo(map);
-        map.fitBounds(line.getBounds());
-        console.log(`Distance: ${data.distance_m}m`);
-      });
+    let startPoint = null;
+    let endPoint = null;
+    let startMarker = null;
+    let endMarker = null;
+    let routeLine = null;
+
+    const statusDiv = document.getElementById("status");
+
+    function updateStatus() {
+      statusDiv.textContent =
+        `Start: ${startPoint ? startPoint.lat.toFixed(4) + "," + startPoint.lng.toFixed(4) : "none"}, ` +
+        `End: ${endPoint ? endPoint.lat.toFixed(4) + "," + endPoint.lng.toFixed(4) : "none"}`;
+    }
+
+    map.on("click", (e) => {
+      if (!startPoint) {
+        startPoint = e.latlng;
+        startMarker = L.marker(startPoint, { title: "Start" }).addTo(map);
+      } else if (!endPoint) {
+        endPoint = e.latlng;
+        endMarker = L.marker(endPoint, { title: "End" }).addTo(map);
+      }
+      updateStatus();
+    });
+
+    document.getElementById("reset").addEventListener("click", () => {
+      startPoint = null;
+      endPoint = null;
+      if (startMarker) map.removeLayer(startMarker);
+      if (endMarker) map.removeLayer(endMarker);
+      if (routeLine) map.removeLayer(routeLine);
+      startMarker = endMarker = routeLine = null;
+      updateStatus();
+    });
+
+    document.getElementById("find").addEventListener("click", () => {
+      if (!startPoint || !endPoint) {
+        alert("Click the map to set both a start and an end point first.");
+        return;
+      }
+
+      const target = parseFloat(document.getElementById("target").value);
+      const button = document.getElementById("find");
+      button.disabled = true;
+      button.textContent = "Searching...";
+
+      fetch("http://127.0.0.1:8000/route", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          start_lat: startPoint.lat,
+          start_lon: startPoint.lng,
+          end_lat: endPoint.lat,
+          end_lon: endPoint.lng,
+          target_distance_m: target,
+        }),
+      })
+        .then((r) => {
+          if (!r.ok) {
+            return r.json().then((err) => { throw new Error(err.detail || "Request failed"); });
+          }
+          return r.json();
+        })
+        .then((data) => {
+          if (routeLine) map.removeLayer(routeLine);
+          routeLine = L.polyline(data.path, { color: "red", weight: 4 }).addTo(map);
+          map.fitBounds(routeLine.getBounds());
+          statusDiv.textContent = `Route found: ${data.distance_m}m (${data.num_nodes} nodes, ${data.steps} steps)`;
+        })
+        .catch((err) => {
+          alert("Error: " + err.message);
+        })
+        .finally(() => {
+          button.disabled = false;
+          button.textContent = "Find route";
+        });
+    });
   </script>
 </body>
 </html>
