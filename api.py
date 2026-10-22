@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from pathfinding import find_path_with_restarts
 
-from graph_utils import to_simple_graph
+from graph_utils import to_simple_graph, highway_breakdown, TRAIL_TYPES
 
 state = {}
 
@@ -67,9 +67,25 @@ def route(req: RouteRequest):
 
     coords = [[G.nodes[n]["y"], G.nodes[n]["x"]] for n in path]
 
+    breakdown = highway_breakdown(G, path)
+    trail_m = sum(l for h, l in breakdown if h in TRAIL_TYPES)
+
+    # Group consecutive edges into trail/road runs so the map can color them
+    segments = []
+    for i, (u, v) in enumerate(zip(path[:-1], path[1:])):
+        is_trail = G[u][v]["highway"] in TRAIL_TYPES
+        if segments and segments[-1]["trail"] == is_trail:
+            segments[-1]["path"].append(coords[i + 1])
+        else:
+            segments.append({"trail": is_trail, "path": [coords[i], coords[i + 1]]})
+
     return {
         "distance_m": round(length, 1),
         "num_nodes": len(path),
         "steps": steps,
         "path": coords,
+        "trail_m": round(trail_m, 1),
+        "trail_pct": round(trail_m / length * 100, 1),
+        "breakdown": [{"highway": h, "meters": round(l, 1)} for h, l in breakdown],
+        "segments": segments,
     }

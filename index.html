@@ -18,6 +18,9 @@
       box-shadow: 0 1px 4px rgba(0,0,0,0.3);
     }
     #controls input { width: 100px; }
+    #breakdown { margin-top: 6px; font-size: 13px; }
+    #breakdown:empty { display: none; }
+    .swatch { display: inline-block; width: 14px; height: 4px; margin: 0 4px 2px 0; vertical-align: middle; }
   </style>
 </head>
 <body>
@@ -27,6 +30,7 @@
     Target distance (m): <input id="target" type="number" value="8000" />
     <button id="find">Find route</button>
     <button id="reset">Reset points</button>
+    <div id="breakdown"></div>
   </div>
   <div id="map"></div>
   <script>
@@ -42,6 +46,20 @@
     let routeLine = null;
 
     const statusDiv = document.getElementById("status");
+    const breakdownDiv = document.getElementById("breakdown");
+
+    const TRAIL_COLOR = "#2e7d32";
+    const ROAD_COLOR = "#d32f2f";
+
+    function showBreakdown(data) {
+      const top = data.breakdown.slice(0, 5).map((b) =>
+        `${b.highway || "unknown"}: ${Math.round(b.meters)}m (${Math.round(b.meters / data.distance_m * 100)}%)`
+      );
+      breakdownDiv.innerHTML =
+        `<div><span class="swatch" style="background:${TRAIL_COLOR}"></span>Trail ` +
+        `<span class="swatch" style="background:${ROAD_COLOR}; margin-left:8px"></span>Road</div>` +
+        `<div>${top.join("<br>")}</div>`;
+    }
 
     function updateStatus() {
       statusDiv.textContent =
@@ -67,6 +85,7 @@
       if (endMarker) map.removeLayer(endMarker);
       if (routeLine) map.removeLayer(routeLine);
       startMarker = endMarker = routeLine = null;
+      breakdownDiv.innerHTML = "";
       updateStatus();
     });
 
@@ -100,9 +119,14 @@
         })
         .then((data) => {
           if (routeLine) map.removeLayer(routeLine);
-          routeLine = L.polyline(data.path, { color: "red", weight: 4 }).addTo(map);
+          routeLine = L.featureGroup(
+            data.segments.map((s) =>
+              L.polyline(s.path, { color: s.trail ? TRAIL_COLOR : ROAD_COLOR, weight: 4 })
+            )
+          ).addTo(map);
           map.fitBounds(routeLine.getBounds());
-          statusDiv.textContent = `Route found: ${data.distance_m}m (${data.num_nodes} nodes, ${data.steps} steps)`;
+          statusDiv.textContent = `Route found: ${data.distance_m}m, ${data.trail_pct}% trail (${data.num_nodes} nodes, ${data.steps} steps)`;
+          showBreakdown(data);
         })
         .catch((err) => {
           alert("Error: " + err.message);
