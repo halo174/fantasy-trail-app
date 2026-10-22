@@ -60,7 +60,7 @@ def route(req: RouteRequest):
             G, start_node, end_node, req.target_distance_m, max_restarts=3
         )
     except ValueError:
-        raise HTTPException(status_code=404, detail="End point is not reachable from start point")
+        raise HTTPException(status_code=404, detail="End point is not reachable from start point within the target distance")
 
     if path is None:
         raise HTTPException(status_code=422, detail="No route found near that target distance")

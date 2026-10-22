@@ -2,17 +2,26 @@ import random
 from graph_utils import precompute_distances_to_end, edge_cost
 
 
-def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, tolerance=0.2, max_steps=20000):
+def reachable_distances(G, start_node, end_node, target_distance, tolerance=0.2):
+    """
+    Distances to end_node, cut off at the longest route the search accepts.
+    Nodes beyond the cutoff could never pass the feasibility check anyway.
+    """
+    dist_to_end = precompute_distances_to_end(G, end_node, cutoff=target_distance * (1 + tolerance))
+    if start_node not in dist_to_end:
+        raise ValueError("end_node is not reachable from start_node within the target distance")
+    return dist_to_end
+
+
+def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, tolerance=0.2, max_steps=20000, dist_to_end=None):
     """
     Randomized DFS with backtracking, guided by a Dijkstra-based feasibility
     bound on real distance. Among feasible neighbors, trail-type edges are
     weighted more heavily so the search prefers trails without ever ruling
     out roads outright.
     """
-    dist_to_end = precompute_distances_to_end(G, end_node)
-
-    if start_node not in dist_to_end:
-        raise ValueError("end_node is not reachable from start_node")
+    if dist_to_end is None:
+        dist_to_end = reachable_distances(G, start_node, end_node, target_distance, tolerance)
 
     path = [start_node]
     visited = {start_node}
@@ -89,9 +98,12 @@ def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, to
     return best_path, best_length, steps
 
 def find_path_with_restarts(G, start_node, end_node, target_distance, tolerance=0.2, steps_per_attempt=20000, max_restarts=10):
+    # Same for every attempt, so compute it once instead of per restart
+    dist_to_end = reachable_distances(G, start_node, end_node, target_distance, tolerance)
     for attempt in range(max_restarts):
         path, length, steps = find_path_matching_distance_dfs(
-            G, start_node, end_node, target_distance, tolerance, max_steps=steps_per_attempt
+            G, start_node, end_node, target_distance, tolerance,
+            max_steps=steps_per_attempt, dist_to_end=dist_to_end,
         )
         if path is not None:
             print(f"  Succeeded on restart {attempt + 1}, {steps} steps")
