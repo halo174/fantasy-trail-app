@@ -1,6 +1,10 @@
 import random
 from graph_utils import precompute_distances_to_end, edge_cost
 
+# Routes end almost exactly at target * (1 + slack). Benchmarked 0.02-0.2 on
+# 1.5x-5x targets: success rate and trail % were the same, so keep it tight.
+SEARCH_SLACK = 0.02
+
 
 def reachable_distances(G, start_node, end_node, target_distance, tolerance=0.2):
     """
@@ -13,15 +17,22 @@ def reachable_distances(G, start_node, end_node, target_distance, tolerance=0.2)
     return dist_to_end
 
 
-def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, tolerance=0.2, max_steps=20000, dist_to_end=None):
+def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, tolerance=0.2, max_steps=20000, dist_to_end=None, slack=SEARCH_SLACK):
     """
     Randomized DFS with backtracking, guided by a Dijkstra-based feasibility
     bound on real distance. Among feasible neighbors, trail-type edges are
     weighted more heavily so the search prefers trails without ever ruling
     out roads outright.
+
+    The walk keeps wandering until the feasibility bound forces it toward the
+    end, so routes land near that bound. Using a smaller slack than the
+    acceptance tolerance keeps them close to the target instead of at +tolerance.
     """
     if dist_to_end is None:
         dist_to_end = reachable_distances(G, start_node, end_node, target_distance, tolerance)
+
+    # Never tighter than the shortest route itself, so targets just under it still work
+    max_length = max(target_distance * (1 + slack), dist_to_end[start_node] * 1.01)
 
     path = [start_node]
     visited = {start_node}
@@ -38,8 +49,7 @@ def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, to
                 continue
             data = G[current][n]
             edge_length = data["length"]
-            remaining_budget = target_distance - (length_so_far + edge_length)
-            if remaining_budget + (target_distance * tolerance) >= dist_to_end[n]:
+            if length_so_far + edge_length + dist_to_end[n] <= max_length:
                 valid.append((n, edge_length, edge_cost(data)))
         return valid
 
@@ -68,12 +78,6 @@ def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, to
             options_stack.pop()
             continue
 
-        if current_length > target_distance * (1 + tolerance) * 1.5:
-            visited.remove(path.pop())
-            traveled.pop()
-            options_stack.pop()
-            continue
-
         if not options_stack[-1]:
             visited.remove(path.pop())
             traveled.pop()
@@ -97,16 +101,18 @@ def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, to
 
     return best_path, best_length, steps
 
-def find_path_with_restarts(G, start_node, end_node, target_distance, tolerance=0.2, steps_per_attempt=20000, max_restarts=10):
+def find_path_with_restarts(G, start_node, end_node, target_distance, tolerance=0.2, steps_per_attempt=20000, max_restarts=10, slack=SEARCH_SLACK):
     # Same for every attempt, so compute it once instead of per restart
     dist_to_end = reachable_distances(G, start_node, end_node, target_distance, tolerance)
+    total_steps = 0
     for attempt in range(max_restarts):
         path, length, steps = find_path_matching_distance_dfs(
             G, start_node, end_node, target_distance, tolerance,
-            max_steps=steps_per_attempt, dist_to_end=dist_to_end,
+            max_steps=steps_per_attempt, dist_to_end=dist_to_end, slack=slack,
         )
+        total_steps += steps
         if path is not None:
-            print(f"  Succeeded on restart {attempt + 1}, {steps} steps")
-            return path, length, steps
+            print(f"  Succeeded on restart {attempt + 1}, {total_steps} total steps")
+            return path, length, total_steps
     print(f"  Failed after {max_restarts} restarts")
-    return None, None, None
+    return None, None, total_steps
