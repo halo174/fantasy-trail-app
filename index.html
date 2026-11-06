@@ -125,7 +125,10 @@
             )
           ).addTo(map);
           map.fitBounds(routeLine.getBounds());
-          statusDiv.textContent = `Route found: ${data.distance_m}m, ${data.trail_pct}% trail (${data.num_nodes} nodes, ${data.steps} steps)`;
+          const prefix = data.within_tolerance
+            ? "Route found"
+            : `Couldn't reach ${data.target_m}m, closest route`;
+          statusDiv.textContent = `${prefix}: ${data.distance_m}m, ${data.trail_pct}% trail (${data.num_nodes} nodes, ${data.steps} steps)`;
           showBreakdown(data);
         })
         .catch((err) => {

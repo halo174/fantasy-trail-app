@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
-from pathfinding import find_path_with_restarts
+from pathfinding import find_path_with_restarts, within_tolerance, UnreachableError
 
 from graph_utils import to_simple_graph, highway_breakdown, TRAIL_TYPES
 
@@ -59,8 +59,13 @@ def route(req: RouteRequest):
         path, length, steps = find_path_with_restarts(
             G, start_node, end_node, req.target_distance_m, max_restarts=3
         )
-    except ValueError:
-        raise HTTPException(status_code=404, detail="End point is not reachable from start point within the target distance")
+    except UnreachableError as e:
+        if e.shortest_m is None:
+            raise HTTPException(status_code=404, detail="No walkable route connects these two points")
+        raise HTTPException(
+            status_code=422,
+            detail=f"The shortest route between these points is {e.shortest_m:.0f}m. Raise the target to at least that.",
+        )
 
     if path is None:
         raise HTTPException(status_code=422, detail="No route found near that target distance")
@@ -81,6 +86,9 @@ def route(req: RouteRequest):
 
     return {
         "distance_m": round(length, 1),
+        "target_m": req.target_distance_m,
+        # False means no route hit the target, and this is the closest one found
+        "within_tolerance": within_tolerance(length, req.target_distance_m),
         "num_nodes": len(path),
         "steps": steps,
         "path": coords,

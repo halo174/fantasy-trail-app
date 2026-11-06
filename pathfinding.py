@@ -1,9 +1,28 @@
 import random
+import networkx as nx
 from graph_utils import precompute_distances_to_end, edge_cost
 
 # Routes end almost exactly at target * (1 + slack). Benchmarked 0.02-0.2 on
 # 1.5x-5x targets: success rate and trail % were the same, so keep it tight.
 SEARCH_SLACK = 0.02
+
+
+class UnreachableError(ValueError):
+    """
+    No route fits the target. shortest_m is the shortest possible route,
+    or None if the end can't be reached from the start at all.
+    """
+    def __init__(self, shortest_m):
+        self.shortest_m = shortest_m
+        if shortest_m is None:
+            msg = "end_node is not reachable from start_node"
+        else:
+            msg = f"shortest route is {shortest_m:.0f}m, longer than the target allows"
+        super().__init__(msg)
+
+
+def within_tolerance(length, target_distance, tolerance=0.2):
+    return abs(length - target_distance) <= target_distance * tolerance
 
 
 def reachable_distances(G, start_node, end_node, target_distance, tolerance=0.2):
@@ -13,7 +32,12 @@ def reachable_distances(G, start_node, end_node, target_distance, tolerance=0.2)
     """
     dist_to_end = precompute_distances_to_end(G, end_node, cutoff=target_distance * (1 + tolerance))
     if start_node not in dist_to_end:
-        raise ValueError("end_node is not reachable from start_node within the target distance")
+        # Only on failure: find out whether the target was too short or there's no route at all
+        try:
+            shortest = nx.shortest_path_length(G, start_node, end_node, weight="length")
+        except nx.NetworkXNoPath:
+            shortest = None
+        raise UnreachableError(shortest)
     return dist_to_end
 
 
@@ -71,7 +95,7 @@ def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, to
                 best_diff = diff
                 best_path = list(path)
                 best_length = current_length
-            if diff <= target_distance * tolerance:
+            if within_tolerance(current_length, target_distance, tolerance):
                 return best_path, best_length, steps
             visited.remove(path.pop())
             traveled.pop()
@@ -102,17 +126,30 @@ def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, to
     return best_path, best_length, steps
 
 def find_path_with_restarts(G, start_node, end_node, target_distance, tolerance=0.2, steps_per_attempt=20000, max_restarts=10, slack=SEARCH_SLACK):
+    """
+    Returns as soon as an attempt lands within tolerance. Otherwise returns the
+    closest route seen across all attempts (check it with within_tolerance),
+    or None if no attempt reached the end at all.
+    """
     # Same for every attempt, so compute it once instead of per restart
     dist_to_end = reachable_distances(G, start_node, end_node, target_distance, tolerance)
     total_steps = 0
+    best_path, best_length = None, None
     for attempt in range(max_restarts):
         path, length, steps = find_path_matching_distance_dfs(
             G, start_node, end_node, target_distance, tolerance,
             max_steps=steps_per_attempt, dist_to_end=dist_to_end, slack=slack,
         )
         total_steps += steps
-        if path is not None:
+        if path is None:
+            continue
+        if within_tolerance(length, target_distance, tolerance):
             print(f"  Succeeded on restart {attempt + 1}, {total_steps} total steps")
             return path, length, total_steps
-    print(f"  Failed after {max_restarts} restarts")
-    return None, None, total_steps
+        if best_path is None or abs(length - target_distance) < abs(best_length - target_distance):
+            best_path, best_length = path, length
+    if best_path is not None:
+        print(f"  No route within tolerance after {max_restarts} restarts, closest is {best_length:.0f}m")
+    else:
+        print(f"  Failed after {max_restarts} restarts")
+    return best_path, best_length, total_steps
