@@ -17,7 +17,7 @@
       border-radius: 6px;
       box-shadow: 0 1px 4px rgba(0,0,0,0.3);
     }
-    #controls input { width: 100px; }
+    #controls input[type="number"] { width: 100px; }
     #breakdown { margin-top: 6px; font-size: 13px; }
     #breakdown:empty { display: none; }
     .swatch { display: inline-block; width: 14px; height: 4px; margin: 0 4px 2px 0; vertical-align: middle; }
@@ -25,7 +25,8 @@
 </head>
 <body>
   <div id="controls">
-    <div>Click map to set start, click again for end</div>
+    <div id="hint">Click map to set start, click again for end</div>
+    <label><input id="loop" type="checkbox" /> Loop (end where you start)</label>
     <div id="status">Start: none, End: none</div>
     Target distance (m): <input id="target" type="number" value="8000" />
     <button id="find">Find route</button>
@@ -61,17 +62,36 @@
         `<div>${top.join("<br>")}</div>`;
     }
 
-    function updateStatus() {
-      statusDiv.textContent =
-        `Start: ${startPoint ? startPoint.lat.toFixed(4) + "," + startPoint.lng.toFixed(4) : "none"}, ` +
-        `End: ${endPoint ? endPoint.lat.toFixed(4) + "," + endPoint.lng.toFixed(4) : "none"}`;
+    const loopBox = document.getElementById("loop");
+    const hintDiv = document.getElementById("hint");
+
+    function fmt(p) {
+      return p ? p.lat.toFixed(4) + "," + p.lng.toFixed(4) : "none";
     }
+
+    function updateStatus() {
+      statusDiv.textContent = loopBox.checked
+        ? `Start/end: ${fmt(startPoint)}`
+        : `Start: ${fmt(startPoint)}, End: ${fmt(endPoint)}`;
+    }
+
+    loopBox.addEventListener("change", () => {
+      hintDiv.textContent = loopBox.checked
+        ? "Click map to set the loop's start"
+        : "Click map to set start, click again for end";
+      // An end point means nothing for a loop, so drop it
+      if (loopBox.checked && endMarker) {
+        map.removeLayer(endMarker);
+        endMarker = endPoint = null;
+      }
+      updateStatus();
+    });
 
     map.on("click", (e) => {
       if (!startPoint) {
         startPoint = e.latlng;
         startMarker = L.marker(startPoint, { title: "Start" }).addTo(map);
-      } else if (!endPoint) {
+      } else if (!endPoint && !loopBox.checked) {
         endPoint = e.latlng;
         endMarker = L.marker(endPoint, { title: "End" }).addTo(map);
       }
@@ -90,8 +110,11 @@
     });
 
     document.getElementById("find").addEventListener("click", () => {
-      if (!startPoint || !endPoint) {
-        alert("Click the map to set both a start and an end point first.");
+      const loop = loopBox.checked;
+      if (!startPoint || (!loop && !endPoint)) {
+        alert(loop
+          ? "Click the map to set a start point first."
+          : "Click the map to set both a start and an end point first.");
         return;
       }
 
@@ -106,8 +129,9 @@
         body: JSON.stringify({
           start_lat: startPoint.lat,
           start_lon: startPoint.lng,
-          end_lat: endPoint.lat,
-          end_lon: endPoint.lng,
+          // Omitted for loops; JSON.stringify drops undefined fields
+          end_lat: loop ? undefined : endPoint.lat,
+          end_lon: loop ? undefined : endPoint.lng,
           target_distance_m: target,
         }),
       })

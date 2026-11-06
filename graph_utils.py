@@ -49,6 +49,21 @@ def highway_breakdown(G, path):
     return sorted(totals.items(), key=lambda x: -x[1])
 
 
+def get_bridges(G):
+    """
+    Undirected segments whose removal would split the network: cul-de-sacs,
+    driveway and footpath stubs, and so on. A loop that never repeats a
+    segment can't use one, since it could never get back across. About a
+    quarter of the Madison graph's segments are bridges.
+
+    Takes ~6s on the full regional graph, so it's computed once and cached on G.
+    """
+    if "bridges" not in G.graph:
+        U = G.to_undirected(as_view=True)
+        G.graph["bridges"] = {frozenset(e) for e in nx.bridges(U)}
+    return G.graph["bridges"]
+
+
 def precompute_distances_to_end(G, end_node, cutoff=None):
     """
     Real distance from every node to end_node. With a cutoff, nodes farther

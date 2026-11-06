@@ -117,3 +117,99 @@ def test_restarts_return_closest_when_none_within_tolerance(monkeypatch):
     assert path == ["closer"]
     assert not within_tolerance(length, 2000)
     assert steps == 30
+
+
+# --- Loops (start == end) ---
+
+def undirected_edges(path):
+    return [frozenset(e) for e in zip(path[:-1], path[1:])]
+
+
+@pytest.mark.parametrize("target", [800, 2000, 4000])
+def test_loop_is_valid_and_within_tolerance(target):
+    G = grid_graph()
+    start = (3, 3)
+
+    path, length, _ = find_path_with_restarts(G, start, start, target)
+
+    assert path[0] == start and path[-1] == start
+    assert len(path) > 2
+    edges = undirected_edges(path)
+    assert len(edges) == len(set(edges)), "loop retraces a segment"
+    assert all(G.has_edge(u, v) for u, v in zip(path[:-1], path[1:]))
+    assert length == pytest.approx(path_length(G, path))
+    assert within_tolerance(length, target)
+
+
+def test_loop_can_cross_its_own_junction():
+    # Figure-8: two 300m triangles that only share node J. Hitting 600m
+    # from S means passing through J twice, which a simple path can't do.
+    G = nx.DiGraph()
+    for n in ["S", "a", "J", "b", "c"]:
+        G.add_node(n, x=0, y=0)
+    for u, v in [("S", "a"), ("a", "J"), ("J", "S"), ("J", "b"), ("b", "c"), ("c", "J")]:
+        add_way(G, u, v, 100)
+
+    path, length, _ = find_path_with_restarts(G, "S", "S", 600, tolerance=0.05)
+    assert length == pytest.approx(600)
+    assert path.count("J") == 2
+
+
+def test_no_loop_on_dead_end_trail():
+    # A straight trail has no loop without retracing it
+    G = nx.DiGraph()
+    for i in range(5):
+        G.add_node(i, x=i, y=0)
+    for i in range(4):
+        add_way(G, i, i + 1, 100, "path")
+
+    path, length, _ = find_path_with_restarts(G, 0, 0, 800, max_restarts=2)
+    assert path is None
+
+
+def test_loop_from_dead_end_stub():
+    # Start at the tip of a 150m stub hanging off the grid. The only way out
+    # is the stub, so the loop walks it out and back and loops from the junction.
+    G = grid_graph()
+    G.add_node("s1", x=-1, y=0)
+    G.add_node("tip", x=-2, y=0)
+    add_way(G, (0, 0), "s1", 100)
+    add_way(G, "s1", "tip", 50)
+
+    path, length, _ = find_path_with_restarts(G, "tip", "tip", 1500)
+
+    assert path[:3] == ["tip", "s1", (0, 0)]
+    assert path[-3:] == [(0, 0), "s1", "tip"]
+    assert length == pytest.approx(path_length(G, path))
+    assert within_tolerance(length, 1500)
+    # Only the stub is repeated
+    inner = undirected_edges(path[2:-2])
+    assert len(inner) == len(set(inner))
+
+
+def test_loop_target_shorter_than_stub():
+    G = grid_graph()
+    G.add_node("tip", x=-1, y=0)
+    add_way(G, (0, 0), "tip", 500)
+    path, _, _ = find_path_with_restarts(G, "tip", "tip", 800)
+    assert path is None
+
+
+def test_loop_from_branching_stub_tree():
+    # Like the real urban start that failed: the start's stub meets a node that
+    # looks like a junction but its other branch is another dead end. The loop
+    # has to walk out to the grid and never wander into the side stub.
+    G = grid_graph()
+    for n in ["tip", "fork", "side", "side2"]:
+        G.add_node(n, x=-1, y=0)
+    add_way(G, "tip", "fork", 50)
+    add_way(G, "fork", "side", 50)
+    add_way(G, "side", "side2", 50)
+    add_way(G, "fork", (0, 0), 100)
+
+    for _ in range(20):
+        path, length, _ = find_path_with_restarts(G, "tip", "tip", 2000)
+        assert path[:3] == ["tip", "fork", (0, 0)]
+        assert path[-3:] == [(0, 0), "fork", "tip"]
+        assert "side" not in path
+        assert within_tolerance(length, 2000)
