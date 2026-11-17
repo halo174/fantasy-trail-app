@@ -1,144 +1,85 @@
 """
-Example journeys a walk can follow.
+Journeys walked at their real story length, over as many walks as it takes.
 
-Each stop's `at` is how far along the story's journey it falls, from 0 (the
-start) to 1 (the end). A walk of any length places the stops at those same
-fractions, so a 5km walk of the Odyssey reaches Circe's island at about 2.1km.
+Each stop's `km` is its distance from the journey's start, using the
+best published figures for each story. Each walk covers the next stretch:
+if you've walked 730km of Frodo's road, a 10km walk today passes
+Rivendell at 735km.
 
-The fractions are rough. They come from story order and, where the story
-has real or commonly estimated geography (Around the World in Eighty Days,
-the Odyssey), approximate distances between places. They're meant to feel
-right, not to be exact.
+`terrain` is the kind of real place a stop should land on, when one is
+nearby (see features.TERRAINS): Lothlórien in real woods, Moria at a real
+tunnel or underpass, and so on.
 
-Every journey is from a public-domain work, except the one marked below.
+NOT PUBLIC DOMAIN: both journeys are from Tolkien's works. They use place
+names only (no quotes, maps or art), for personal use. Remove them before
+showing this app publicly.
 """
 
 JOURNEYS = [
     {
-        "id": "oz",
-        "title": "The Road to Oz",
-        "source": "L. Frank Baum, The Wonderful Wizard of Oz (1900), public domain",
-        "blurb": "Follow the yellow brick road to the Emerald City, then find your way home.",
-        "suggested_km": 5,
-        "loop": True,  # there's no place like home
+        "id": "frodo",
+        "title": "Frodo's Road",
+        "source": "J.R.R. Tolkien, The Lord of the Rings (1954-55), place names only",
+        "blurb": "From Bag End to the fires of Mount Doom, the long way round.",
+        "total_km": 2865,
+        # Stage distances from Karen Wynn Fonstad, The Atlas of Middle-earth
+        # (rev. ed., 1991), measured on Tolkien's maps, as tabulated at
+        # https://lord-of-the-steps.ru/en/blog/frodos-route. The 2,865km
+        # (~1,779mi) total matches the Eowyn Challenge figure from the Atlas.
+        "distance_note": "Stage distances from Fonstad's Atlas of Middle-earth.",
         "stops": [
-            {"name": "Munchkin Country", "at": 0.0},
-            {"name": "The Scarecrow's cornfield", "at": 0.06},
-            {"name": "The Tin Woodman's cottage", "at": 0.12},
-            {"name": "The Cowardly Lion's forest", "at": 0.18},
-            {"name": "The Kalidahs' ravine", "at": 0.24},
-            {"name": "The deadly poppy field", "at": 0.32},
-            {"name": "The Emerald City", "at": 0.42},
-            {"name": "The Wicked Witch's castle", "at": 0.56},
-            {"name": "Back to the Emerald City", "at": 0.68},
-            {"name": "The Dainty China Country", "at": 0.80},
-            {"name": "Glinda's palace", "at": 0.92},
-            {"name": "Home to Kansas", "at": 1.0},
+            {"name": "Bag End", "km": 0, "terrain": "town"},
+            {"name": "Bucklebury Ferry", "km": 115, "terrain": "water"},
+            {"name": "Bree", "km": 215, "terrain": "town"},
+            {"name": "Weathertop", "km": 385, "terrain": "hill"},
+            {"name": "Rivendell", "km": 735, "terrain": "water"},
+            {"name": "The gates of Moria", "km": 1285, "terrain": "tunnel"},
+            {"name": "Lothlórien", "km": 1480, "terrain": "forest"},
+            {"name": "Amon Hen", "km": 2105, "terrain": "hill"},
+            {"name": "The Dead Marshes", "km": 2360, "terrain": "marsh"},
+            {"name": "Minas Morgul", "km": 2640, "terrain": "tower"},
+            {"name": "Cirith Ungol", "km": 2675, "terrain": "tunnel"},
+            {"name": "Mount Doom", "km": 2865, "terrain": "hill"},
         ],
     },
     {
-        "id": "odyssey",
-        "title": "The Long Way to Ithaca",
-        "source": "Homer, The Odyssey (c. 8th century BC), public domain",
-        "blurb": "Ten years, one ship, and every monster in the Mediterranean between you and home.",
-        "suggested_km": 8,
-        "loop": False,
+        "id": "bilbo",
+        "title": "Bilbo's Road",
+        "source": "J.R.R. Tolkien, The Hobbit (1937), place names only",
+        "blurb": "There and back again, or at least there: Bag End to the Lonely Mountain.",
+        "total_km": 1529,
+        # Total 950mi (1,529km) and Bag End to Rivendell 397mi (639km) from
+        # LOTRProject, as reported at https://www.theonering.net/torwp/2014/05/31/
+        # 89705-compare-the-time-and-distance-travelled-in-the-hobbit-and-the-lord-of-the-rings
+        # No published source gives the other stages, so those stops are
+        # estimates from their positions on Tolkien's map.
+        "distance_note": "Total and Rivendell from LOTRProject; other stops estimated from the map.",
         "stops": [
-            {"name": "Troy", "at": 0.0},
-            {"name": "Ismarus, land of the Cicones", "at": 0.05},
-            {"name": "Land of the Lotus-Eaters", "at": 0.15},
-            {"name": "The Cyclops' island", "at": 0.22},
-            {"name": "Aeolus, keeper of the winds", "at": 0.30},
-            {"name": "Circe's island", "at": 0.42},
-            {"name": "The Land of the Dead", "at": 0.50},
-            {"name": "The Sirens", "at": 0.58},
-            {"name": "Scylla and Charybdis", "at": 0.63},
-            {"name": "Calypso's island", "at": 0.80},
-            {"name": "Phaeacia", "at": 0.92},
-            {"name": "Ithaca", "at": 1.0},
-        ],
-    },
-    {
-        "id": "alice",
-        "title": "Down the Rabbit Hole",
-        "source": "Lewis Carroll, Alice's Adventures in Wonderland (1865), public domain",
-        "blurb": "Chase a late rabbit through Wonderland and wake up back on the riverbank.",
-        "suggested_km": 3,
-        "loop": True,  # it was all a dream
-        "stops": [
-            {"name": "The riverbank", "at": 0.0},
-            {"name": "Down the rabbit hole", "at": 0.08},
-            {"name": "The pool of tears", "at": 0.20},
-            {"name": "The White Rabbit's house", "at": 0.32},
-            {"name": "The Caterpillar's mushroom", "at": 0.42},
-            {"name": "The Duchess's kitchen", "at": 0.52},
-            {"name": "The mad tea party", "at": 0.64},
-            {"name": "The Queen's croquet ground", "at": 0.76},
-            {"name": "The Mock Turtle's shore", "at": 0.86},
-            {"name": "The trial of the Knave of Hearts", "at": 0.95},
-            {"name": "Waking on the riverbank", "at": 1.0},
-        ],
-    },
-    {
-        "id": "west",
-        "title": "Journey to the West",
-        "source": "Wu Cheng'en, Journey to the West (16th century), public domain",
-        "blurb": "Escort a monk, a monkey king, a pig and a river spirit to the scriptures in the west.",
-        "suggested_km": 10,
-        "loop": False,
-        "stops": [
-            {"name": "Chang'an", "at": 0.0},
-            {"name": "Five Elements Mountain", "at": 0.10},
-            {"name": "Eagle Grief Stream", "at": 0.15},
-            {"name": "Gao Village", "at": 0.25},
-            {"name": "Yellow Wind Ridge", "at": 0.32},
-            {"name": "Flowing Sands River", "at": 0.38},
-            {"name": "The Flaming Mountains", "at": 0.60},
-            {"name": "Lion Camel Ridge", "at": 0.78},
-            {"name": "Vulture Peak", "at": 1.0},
-        ],
-    },
-    {
-        "id": "eighty-days",
-        "title": "Around the World in Eighty Days",
-        "source": "Jules Verne, Around the World in Eighty Days (1872), public domain",
-        "blurb": "A wager at the Reform Club: circle the globe and be back in London on time.",
-        "suggested_km": 8,
-        "loop": True,  # London to London
-        # From approximate real distances along Fogg's route, about 38,000km in all
-        "stops": [
-            {"name": "London", "at": 0.0},
-            {"name": "Suez", "at": 0.09},
-            {"name": "Bombay", "at": 0.22},
-            {"name": "Calcutta", "at": 0.27},
-            {"name": "Hong Kong", "at": 0.42},
-            {"name": "Yokohama", "at": 0.49},
-            {"name": "San Francisco", "at": 0.71},
-            {"name": "New York", "at": 0.85},
-            {"name": "Liverpool", "at": 0.99},
-            {"name": "London, just in time", "at": 1.0},
-        ],
-    },
-    # NOT public domain. Uses place names only: no quotes, maps or art. Remove
-    # this entry before showing the app publicly; nothing else depends on it.
-    {
-        "id": "fellowship",
-        "title": "The Fellowship's Road",
-        "source": "J.R.R. Tolkien, The Fellowship of the Ring (1954), place names only",
-        "blurb": "From a hobbit hole in the Shire, south along the Great River.",
-        "suggested_km": 8,
-        "loop": False,
-        "stops": [
-            {"name": "Bag End", "at": 0.0},
-            {"name": "Bree", "at": 0.12},
-            {"name": "Weathertop", "at": 0.20},
-            {"name": "Rivendell", "at": 0.40},
-            {"name": "The gates of Moria", "at": 0.62},
-            {"name": "Lothlórien", "at": 0.72},
-            {"name": "The Argonath", "at": 0.95},
-            {"name": "Amon Hen", "at": 1.0},
+            {"name": "Bag End", "km": 0, "terrain": "town"},
+            {"name": "The Trollshaws", "km": 560, "terrain": "forest"},
+            {"name": "Rivendell", "km": 639, "terrain": "water"},
+            {"name": "Goblin-town", "km": 750, "terrain": "tunnel"},
+            {"name": "Beorn's hall", "km": 900, "terrain": "meadow"},
+            {"name": "Mirkwood", "km": 1000, "terrain": "forest"},
+            {"name": "The Elvenking's halls", "km": 1250, "terrain": "tunnel"},
+            {"name": "Lake-town", "km": 1440, "terrain": "water"},
+            {"name": "The Lonely Mountain", "km": 1529, "terrain": "hill"},
         ],
     },
 ]
 
 JOURNEYS_BY_ID = {j["id"]: j for j in JOURNEYS}
+
+
+def stops_due(journey, progress_km, walk_km):
+    """Stops reached on a walk of walk_km starting at progress_km, never the start stop."""
+    end_km = progress_km + walk_km
+    return [s for s in journey["stops"] if progress_km < s["km"] <= end_km + 1e-9]
+
+
+def next_stop(journey, progress_km):
+    """The first stop still ahead after progress_km, or None when the journey is done."""
+    for s in journey["stops"]:
+        if s["km"] > progress_km + 1e-9:
+            return s
+    return None

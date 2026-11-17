@@ -8,18 +8,34 @@ def highway_type(data):
     return h[0] if isinstance(h, list) else h
 
 
+def _first(value):
+    return value[0] if isinstance(value, list) else value
+
+
+def _has_tag(data, key):
+    """True for any OSM value except "no", e.g. bridge=yes|boardwalk, tunnel=yes|building_passage."""
+    value = _first(data.get(key))
+    return value is not None and value != "no"
+
+
 def to_simple_graph(G_multi):
+    """
+    One edge per node pair, keeping the shortest when OSM has parallel ways.
+    Keeps length and highway for routing, plus bridge, tunnel and name so
+    journey stops can land on real bridges and tunnels.
+    """
     G_simple = nx.DiGraph()
     G_simple.add_nodes_from(G_multi.nodes(data=True))
     for u, v, data in G_multi.edges(data=True):
-        length = float(data["length"])
-        highway = highway_type(data)
-        if G_simple.has_edge(u, v):
-            if length < G_simple[u][v]["length"]:
-                G_simple[u][v]["length"] = length
-                G_simple[u][v]["highway"] = highway
-        else:
-            G_simple.add_edge(u, v, length=length, highway=highway)
+        attrs = {
+            "length": float(data["length"]),
+            "highway": highway_type(data),
+            "bridge": _has_tag(data, "bridge"),
+            "tunnel": _has_tag(data, "tunnel"),
+            "name": _first(data.get("name")),
+        }
+        if not G_simple.has_edge(u, v) or attrs["length"] < G_simple[u][v]["length"]:
+            G_simple.add_edge(u, v, **attrs)
     return G_simple
 
 TRAIL_TYPES = {"path", "track", "bridleway", "footway", "pedestrian"}

@@ -192,6 +192,31 @@ header h1 { margin: 0; font-size: 1.5rem; letter-spacing: 0.01em; }
 .swatch.trail { background: var(--trail); }
 .swatch.road { background: var(--road); }
 
+/* Journey progress */
+.progress { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+.bar { height: 8px; border-radius: 4px; background: var(--accent-soft); overflow: hidden; }
+.bar .fill { height: 100%; width: 0; background: var(--accent); transition: width 0.4s; }
+.progress-text { margin: 8px 0 2px; font-weight: 600; }
+.next-stop { margin: 0 0 8px; color: var(--muted); font-size: 0.92rem; }
+.stamps { margin: 0 0 8px; padding: 0; list-style: none; font-size: 0.88rem; }
+.stamps li { padding: 3px 0; }
+.stamps li::before { content: "✓ "; color: var(--accent); font-weight: 700; }
+.stamps .when { color: var(--muted); }
+.progress-actions { display: flex; gap: 12px; }
+.progress-actions button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.stops .where { display: block; color: var(--muted); font-size: 0.82rem; }
+.after { margin: 10px 0; color: var(--muted); }
+.result .actions { margin-top: 8px; }
+
 /* Map markers */
 .pin {
   display: grid;

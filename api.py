@@ -6,10 +6,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from pathfinding import find_path_with_restarts, within_tolerance, UnreachableError
+from pathfinding import find_path_with_restarts, find_route_via, within_tolerance, UnreachableError
 from graph_utils import to_simple_graph, highway_breakdown, get_bridges, points_along_path, TRAIL_TYPES
-from journeys import JOURNEYS, JOURNEYS_BY_ID
+from journeys import JOURNEYS, JOURNEYS_BY_ID, stops_due, next_stop
 from regions import RegionStore, RegionNotReady, geocode_us
+from features import FeatureStore, find_anchors, nodes_within, terrain_order
 
 STATIC_DIR = Path(__file__).parent / "static"
 MADISON_ID = "madison"
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
     # Center and 50-mile radius the regional graph was pulled with
     store.add_permanent(MADISON_ID, "Madison, WI", 43.0731, -89.4012, 80467, G_multi, G)
     state["regions"] = store
+    state["features"] = FeatureStore()
     print(f"Graph ready: {len(G.nodes)} nodes")
     yield
     state.clear()
@@ -85,6 +87,25 @@ def region_status(region_id: str):
     return region.info()
 
 
+class PointRequest(BaseModel):
+    lat: float
+    lon: float
+
+
+@app.post("/features")
+def prepare_features(req: PointRequest):
+    """Start getting real places near a start point ready, so stops can land on them."""
+    return state["features"].ensure(req.lat, req.lon).info()
+
+
+@app.get("/features/{cell_id}")
+def features_status(cell_id: str):
+    cell = state["features"].get(cell_id)
+    if cell is None:
+        raise HTTPException(status_code=404, detail="Unknown area")
+    return cell.info()
+
+
 class RouteRequest(BaseModel):
     start_lat: float
     start_lon: float
@@ -92,8 +113,10 @@ class RouteRequest(BaseModel):
     end_lat: float | None = None
     end_lon: float | None = None
     target_distance_m: float
-    # Optional: place this journey's stops along the route as landmarks
+    # Optional: walk the next stretch of this journey. progress_km is how
+    # far along it you already are; stops due on this walk are placed on it.
     journey_id: str | None = None
+    progress_km: float = 0.0
     region_id: str = MADISON_ID
 
 
@@ -119,10 +142,16 @@ def route(req: RouteRequest):
         )
 
     journey = None
+    target_m = req.target_distance_m
     if req.journey_id is not None:
         journey = JOURNEYS_BY_ID.get(req.journey_id)
         if journey is None:
             raise HTTPException(status_code=400, detail=f"Unknown journey: {req.journey_id}")
+        remaining_km = journey["total_km"] - req.progress_km
+        if remaining_km <= 0:
+            raise HTTPException(status_code=400, detail=f"You've finished {journey['title']}!")
+        # The last walk of a journey is only as long as what's left of it
+        target_m = min(target_m, remaining_km * 1000)
 
     start_node = ox.distance.nearest_nodes(G_multi, req.start_lon, req.start_lat)
     if (req.end_lat is None) != (req.end_lon is None):
@@ -134,11 +163,38 @@ def route(req: RouteRequest):
         end_node = ox.distance.nearest_nodes(G_multi, req.end_lon, req.end_lat)
 
     loop = start_node == end_node
+
+    # Stops this walk reaches, as (stop, meters into the walk)
+    due = []
+    if journey is not None:
+        due = [
+            ({**stop, "terrains": terrain_order(stop["terrain"])}, (stop["km"] - req.progress_km) * 1000)
+            for stop in stops_due(journey, req.progress_km, target_m / 1000)
+        ]
+
+    # Try to bend the walk through real places matching each stop. Bridges
+    # and tunnels come from the walk graph itself, so they work even before
+    # the area's other features (woods, water...) have downloaded.
+    via = None
+    features = state["features"].ready_features(req.start_lat, req.start_lon)
+    if due:
+        near = nodes_within(G, start_node, target_m * (0.55 if loop else 1.0))
+        anchors = find_anchors(G, features or [], near)
+        via = find_route_via(G, start_node, end_node, target_m, due, anchors)
+        # A walk of the length you asked for beats a stop on matching terrain:
+        # if bending through real places can't fit the distance, walk plainly
+        if via is not None and not within_tolerance(via[1], target_m):
+            via = None
+
     try:
-        path, length, steps = find_path_with_restarts(
-            G, start_node, end_node, req.target_distance_m,
-            **(LOOP_SEARCH if loop else POINT_TO_POINT_SEARCH),
-        )
+        if via is not None:
+            path, length, steps, placements = via
+        else:
+            placements = [None] * len(due)
+            path, length, steps = find_path_with_restarts(
+                G, start_node, end_node, target_m,
+                **(LOOP_SEARCH if loop else POINT_TO_POINT_SEARCH),
+            )
     except UnreachableError as e:
         if e.shortest_m is None:
             raise HTTPException(status_code=404, detail="No walkable route connects these two points")
@@ -165,20 +221,49 @@ def route(req: RouteRequest):
             segments.append({"trail": is_trail, "path": [coords[i], coords[i + 1]]})
 
     landmarks = []
+    for (stop, due_m), placement in zip(due, placements):
+        if placement is not None:
+            node = placement["node"]
+            lat, lon, at_m = G.nodes[node]["y"], G.nodes[node]["x"], placement["at_m"]
+            landed_on, place_name = placement["terrain"], placement["place_name"]
+        else:
+            # No matching place: put it where it falls proportionally
+            (p,) = points_along_path(G, path, [min(due_m / target_m, 1.0)])
+            lat, lon, at_m = p["lat"], p["lon"], p["at_m"]
+            landed_on, place_name = None, None
+        landmarks.append({
+            "name": stop["name"], "terrain": stop["terrain"],
+            "landed_on": landed_on,  # the stop's terrain, a fallback, or None
+            "place_name": place_name,  # the real place's OSM name, when it has one
+            "lat": lat, "lon": lon, "at_m": round(at_m, 1), "journey_km": stop["km"],
+        })
+
+    journey_info = None
     if journey is not None:
-        stops = journey["stops"]
-        points = points_along_path(G, path, [s["at"] for s in stops])
-        landmarks = [
-            {"name": s["name"], "lat": p["lat"], "lon": p["lon"], "at_m": round(p["at_m"], 1)}
-            for s, p in zip(stops, points)
-        ]
+        # Credit at least up to the last stop reached, so a walk that came in
+        # a few meters short of its target still counts as reaching it
+        credit_km = length / 1000
+        if due:
+            credit_km = max(credit_km, due[-1][0]["km"] - req.progress_km)
+        credit_km = min(credit_km, journey["total_km"] - req.progress_km)
+        after = req.progress_km + credit_km
+        upcoming = next_stop(journey, after)
+        journey_info = {
+            "id": journey["id"],
+            "credit_km": round(credit_km, 3),
+            "progress_after_km": round(after, 3),
+            "finished": upcoming is None,
+            "next_stop": None if upcoming is None else {
+                "name": upcoming["name"], "km_away": round(upcoming["km"] - after, 1),
+            },
+        }
 
     return {
         "loop": loop,
         "distance_m": round(length, 1),
-        "target_m": req.target_distance_m,
+        "target_m": target_m,
         # False means no route hit the target, and this is the closest one found
-        "within_tolerance": within_tolerance(length, req.target_distance_m),
+        "within_tolerance": within_tolerance(length, target_m),
         "num_nodes": len(path),
         "steps": steps,
         "path": coords,
@@ -187,6 +272,9 @@ def route(req: RouteRequest):
         "breakdown": [{"highway": h, "meters": round(l, 1)} for h, l in breakdown],
         "segments": segments,
         "landmarks": landmarks,
+        "journey": journey_info,
+        # False while real places near the start are still downloading
+        "features_ready": features is not None,
     }
 
 

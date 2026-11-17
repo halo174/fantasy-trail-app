@@ -11,6 +11,8 @@ from fastapi.testclient import TestClient
 import api
 from journeys import JOURNEYS_BY_ID
 from regions import RegionStore, Region, PREPARING, FAILED
+from features import FeatureStore
+from shapely.geometry import LineString
 
 # 0.0009 deg of latitude is about 100m, so this is roughly a 100m street grid
 STEP = 0.0009
@@ -50,8 +52,25 @@ def store(monkeypatch, tmp_path):
     return store
 
 
+def river(lat, lon, radius_m):
+    """Fake feature download: a named river along the grid's row j=8."""
+    return [{"terrain": "water", "name": "The Bruinen",
+             "geometry": LineString([(LON0, LAT0 + 8 * STEP), (LON0 + 9 * STEP, LAT0 + 8 * STEP)])}]
+
+
+def no_features(lat, lon, radius_m):
+    raise TimeoutError("Overpass timed out")
+
+
 @pytest.fixture
-def client(store):
+def features(monkeypatch, tmp_path):
+    fs = FeatureStore(fetch_fn=river, feature_dir=tmp_path / "features", background=False)
+    monkeypatch.setitem(api.state, "features", fs)
+    return fs
+
+
+@pytest.fixture
+def client(store, features):
     return TestClient(api.app)
 
 
@@ -63,43 +82,75 @@ def corner(i, j):
     return {"lat": LAT0 + j * STEP, "lon": LON0 + i * STEP}
 
 
+def walk(client, progress_km, target_m=2000, journey_id="frodo", at=(4, 4)):
+    s = corner(*at)
+    return client.post("/route", json={
+        "start_lat": s["lat"], "start_lon": s["lon"], "target_distance_m": target_m,
+        "journey_id": journey_id, "progress_km": progress_km,
+    })
+
+
 def test_journeys_endpoint(client):
     r = client.get("/journeys")
     assert r.status_code == 200
-    ids = [j["id"] for j in r.json()]
-    assert "oz" in ids and len(ids) == len(JOURNEYS_BY_ID)
+    assert [j["id"] for j in r.json()] == list(JOURNEYS_BY_ID)
 
 
-def test_route_with_journey_places_landmarks(client):
-    s, e = corner(0, 0), corner(5, 5)
-    r = client.post("/route", json={
-        "start_lat": s["lat"], "start_lon": s["lon"],
-        "end_lat": e["lat"], "end_lon": e["lon"],
-        "target_distance_m": 1400,
-        "journey_id": "odyssey",
-    })
+def test_walk_reaching_a_stop_lands_it_on_matching_terrain(client):
+    # Rivendell (water) is at 735km; starting at 734.2km it's due 800m in
+    r = walk(client, progress_km=734.2)
     assert r.status_code == 200, r.text
     data = r.json()
-    stops = JOURNEYS_BY_ID["odyssey"]["stops"]
-    landmarks = data["landmarks"]
-    assert [lm["name"] for lm in landmarks] == [st["name"] for st in stops]
-    assert landmarks[0]["at_m"] == 0
-    assert landmarks[-1]["at_m"] == pytest.approx(data["distance_m"], abs=0.2)
-    # First and last landmarks sit on the route's ends
-    assert [landmarks[0]["lat"], landmarks[0]["lon"]] == pytest.approx(data["path"][0])
-    assert [landmarks[-1]["lat"], landmarks[-1]["lon"]] == pytest.approx(data["path"][-1])
+    assert data["features_ready"]
+    (lm,) = data["landmarks"]
+    assert lm["name"] == "Rivendell" and lm["journey_km"] == 735
+    assert lm["landed_on"] == "water" and lm["place_name"] == "The Bruinen"
+    assert lm["lat"] == pytest.approx(LAT0 + 8 * STEP)  # on the river row
+    assert 0 < lm["at_m"] < data["distance_m"]
+
+    j = data["journey"]
+    assert j["credit_km"] >= 0.8  # at least up to Rivendell
+    assert j["next_stop"]["name"] == "The gates of Moria"
+    assert j["next_stop"]["km_away"] == pytest.approx(1285 - j["progress_after_km"], abs=0.1)
+    assert not j["finished"]
 
 
-def test_loop_with_journey(client):
+def test_walk_between_stops_has_no_landmarks(client):
+    data = walk(client, progress_km=100).json()
+    assert data["landmarks"] == []
+    assert data["journey"]["next_stop"]["name"] == "Bucklebury Ferry"
+
+
+def test_stop_falls_back_to_proportional_spot_without_features(client, monkeypatch, tmp_path):
+    monkeypatch.setitem(api.state, "features", FeatureStore(fetch_fn=no_features, feature_dir=tmp_path / "f2", background=False))
+    data = walk(client, progress_km=734.2).json()
+    assert not data["features_ready"]
+    (lm,) = data["landmarks"]
+    assert lm["landed_on"] is None
+    assert lm["at_m"] == pytest.approx(800, abs=1)
+
+
+def test_last_walk_is_capped_at_the_journey_end(client):
+    data = walk(client, progress_km=2864, target_m=5000).json()
+    assert data["target_m"] == pytest.approx(1000)
+    (lm,) = data["landmarks"]
+    assert lm["name"] == "Mount Doom"
+    assert data["journey"]["finished"]
+    assert data["journey"]["next_stop"] is None
+
+
+def test_finished_journey_is_400(client):
+    r = walk(client, progress_km=2865)
+    assert r.status_code == 400
+    assert "finished" in r.json()["detail"]
+
+
+def test_prepare_features_endpoint(client):
     s = corner(4, 4)
-    r = client.post("/route", json={
-        "start_lat": s["lat"], "start_lon": s["lon"],
-        "target_distance_m": 2000, "journey_id": "oz",
-    })
-    assert r.status_code == 200, r.text
-    data = r.json()
-    assert data["loop"]
-    assert len(data["landmarks"]) == len(JOURNEYS_BY_ID["oz"]["stops"])
+    info = client.post("/features", json={"lat": s["lat"], "lon": s["lon"]}).json()
+    assert info["status"] == "ready"
+    assert client.get(f"/features/{info['id']}").json()["status"] == "ready"
+    assert client.get("/features/nope").status_code == 404
 
 
 def test_route_without_journey_has_no_landmarks(client):
@@ -181,3 +232,14 @@ def test_geocode_failure_is_502(client, monkeypatch):
         raise ConnectionError("down")
     monkeypatch.setattr(api, "geocode_us", boom)
     assert client.get("/geocode", params={"q": "x"}).status_code == 502
+
+
+def test_short_via_route_falls_back_to_plain_walk(client, monkeypatch):
+    # If bending through matching places can't fit the distance, the user
+    # gets a walk of the length they asked for, with the stop placed plainly
+    def short_via(G, start, end, target, stops, anchors, tolerance=0.2):
+        return [start], target * 0.5, 0, [{"node": start, "at_m": 0, "terrain": "water", "place_name": "x"}]
+    monkeypatch.setattr(api, "find_route_via", short_via)
+    data = walk(client, progress_km=734.2).json()
+    assert data["within_tolerance"]
+    assert data["landmarks"][0]["landed_on"] is None

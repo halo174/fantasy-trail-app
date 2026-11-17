@@ -42,7 +42,7 @@ def reachable_distances(G, start_node, end_node, target_distance, tolerance=0.2)
     return dist_to_end
 
 
-def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, tolerance=0.2, max_steps=20000, dist_to_end=None, slack=SEARCH_SLACK):
+def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, tolerance=0.2, max_steps=20000, dist_to_end=None, slack=SEARCH_SLACK, forbidden_edges=frozenset()):
     """
     Randomized DFS with backtracking, guided by a Dijkstra-based feasibility
     bound on real distance. Among feasible neighbors, trail-type edges are
@@ -58,6 +58,9 @@ def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, to
     "never walk the same street segment twice, in either direction" instead
     of "never visit the same node twice". Loops may cross their own
     intersections, but never retrace a segment.
+
+    forbidden_edges is a set of undirected segments (frozensets of two nodes)
+    the route may not use, e.g. segments an earlier leg of the walk already took.
     """
     if dist_to_end is None:
         dist_to_end = reachable_distances(G, start_node, end_node, target_distance, tolerance)
@@ -74,8 +77,10 @@ def find_path_matching_distance_dfs(G, start_node, end_node, target_distance, to
     options_stack = []
 
     def blocked(current, n):
+        edge = frozenset((current, n))
+        if edge in forbidden_edges:
+            return True
         if loop:
-            edge = frozenset((current, n))
             return edge in used_edges or edge in bridges
         return n in visited
 
@@ -193,7 +198,7 @@ def loop_entry_path(G, start_node):
     return None
 
 
-def find_path_with_restarts(G, start_node, end_node, target_distance, tolerance=0.2, steps_per_attempt=20000, max_restarts=10, slack=SEARCH_SLACK):
+def find_path_with_restarts(G, start_node, end_node, target_distance, tolerance=0.2, steps_per_attempt=20000, max_restarts=10, slack=SEARCH_SLACK, forbidden_edges=frozenset()):
     """
     Returns as soon as an attempt lands within tolerance. Otherwise returns the
     closest route seen across all attempts (check it with within_tolerance),
@@ -220,7 +225,7 @@ def find_path_with_restarts(G, start_node, end_node, target_distance, tolerance=
             inner_tolerance = target_distance * tolerance / inner_target
             loop, loop_m, steps = _search_with_restarts(
                 G, junction, junction, inner_target, inner_tolerance,
-                steps_per_attempt, max_restarts, slack,
+                steps_per_attempt, max_restarts, slack, forbidden_edges,
             )
             if loop is None:
                 return None, None, steps
@@ -228,11 +233,11 @@ def find_path_with_restarts(G, start_node, end_node, target_distance, tolerance=
 
     return _search_with_restarts(
         G, start_node, end_node, target_distance, tolerance,
-        steps_per_attempt, max_restarts, slack,
+        steps_per_attempt, max_restarts, slack, forbidden_edges,
     )
 
 
-def _search_with_restarts(G, start_node, end_node, target_distance, tolerance, steps_per_attempt, max_restarts, slack):
+def _search_with_restarts(G, start_node, end_node, target_distance, tolerance, steps_per_attempt, max_restarts, slack, forbidden_edges=frozenset()):
     # Same for every attempt, so compute it once instead of per restart
     dist_to_end = reachable_distances(G, start_node, end_node, target_distance, tolerance)
     total_steps = 0
@@ -241,6 +246,7 @@ def _search_with_restarts(G, start_node, end_node, target_distance, tolerance, s
         path, length, steps = find_path_matching_distance_dfs(
             G, start_node, end_node, target_distance, tolerance,
             max_steps=steps_per_attempt, dist_to_end=dist_to_end, slack=slack,
+            forbidden_edges=forbidden_edges,
         )
         total_steps += steps
         if path is None:
@@ -255,3 +261,164 @@ def _search_with_restarts(G, start_node, end_node, target_distance, tolerance, s
     else:
         print(f"  Failed after {max_restarts} restarts")
     return best_path, best_length, total_steps
+
+# How far into a leg's budget an anchor may sit (shortest distance, as a
+# fraction of the leg). A near anchor is fine, the leg wanders to make up
+# its distance; one near the very end leaves no slack to match it.
+ANCHOR_WINDOW = (0.1, 0.9)
+LEG_SEARCH = {"steps_per_attempt": 5000, "max_restarts": 15}
+VIA_ATTEMPTS = 4
+
+
+def find_route_via(G, start_node, end_node, target_distance, stops, anchors, tolerance=0.2):
+    """
+    A route of about target_distance that passes through a real place for
+    each stop, in order, near the right distance into the walk.
+
+    stops: [(stop, at_m)], at_m = how far into the walk the stop is due.
+    anchors: {terrain: {node: place_name or None}} from features.find_anchors.
+    Each stop's terrain is tried first, then its fallbacks (stop["terrains"]).
+
+    The walk is chained as legs (start -> place -> place -> end). Each leg
+    is a normal distance-matched search with its share of the distance, and
+    may not reuse a segment an earlier leg took. Returns
+    (path, length, steps, placements), with one placement per stop:
+    {"node", "at_m", "terrain", "place_name"}, or None for a stop due right
+    at the end of the walk, where there's no room to bend toward anything.
+    Returns None if any leg can't be routed; the caller falls back to a
+    plain route.
+    """
+    if start_node == end_node:
+        # Same dead-end handling as plain loops: walk the stub out and back
+        spur = loop_entry_path(G, start_node)
+        if spur is None:
+            return None
+        if len(spur) > 1:
+            spur_m = path_length(G, spur)
+            junction = spur[-1]
+            inner_target = target_distance - 2 * spur_m
+            if inner_target <= 0:
+                return None
+            inner_stops = [(stop, max(at_m - spur_m, 0.0)) for stop, at_m in stops]
+            inner = find_route_via(
+                G, junction, junction, inner_target, inner_stops, anchors,
+                tolerance=target_distance * tolerance / inner_target,
+            )
+            if inner is None:
+                return None
+            path, length, steps, placements = inner
+            for p in placements:
+                if p is not None:
+                    p["at_m"] += spur_m
+            return spur + path[1:] + spur[-2::-1], length + 2 * spur_m, steps, placements
+
+    try:
+        dist_to_end = reachable_distances(G, start_node, end_node, target_distance, tolerance)
+    except UnreachableError:
+        return None
+
+    # Each attempt picks anchors at random, so a failed or short attempt can
+    # succeed on a retry. Keep the closest in case none fits the distance.
+    best = None
+    for _ in range(VIA_ATTEMPTS):
+        result = _route_via_once(G, start_node, end_node, target_distance, stops, anchors, dist_to_end, tolerance)
+        if result is None:
+            continue
+        if within_tolerance(result[1], target_distance, tolerance):
+            return result
+        if best is None or abs(result[1] - target_distance) < abs(best[1] - target_distance):
+            best = result
+    return best
+
+
+def _route_via_once(G, start_node, end_node, target_distance, stops, anchors, dist_to_end, tolerance):
+    path = [start_node]
+    traveled = 0.0
+    used = set()
+    total_steps = 0
+    placements = []
+    current = start_node
+
+    for stop, at_m in stops:
+        if target_distance - at_m < 100:
+            # Due at the very end of the walk: it lands wherever the walk ends
+            placements.append(None)
+            continue
+        leg_target = at_m - traveled
+        remaining_after = target_distance - at_m
+        candidates = _anchor_candidates(G, current, end_node, leg_target, remaining_after, stop, anchors, dist_to_end)
+
+        for anchor, terrain in candidates[:3]:
+            try:
+                leg, leg_m, steps = find_path_with_restarts(
+                    G, current, anchor, max(leg_target, 1.0), tolerance=0.25,
+                    forbidden_edges=frozenset(used), **LEG_SEARCH,
+                )
+            except UnreachableError:
+                continue
+            total_steps += steps
+            if leg is None:
+                continue
+            path += leg[1:]
+            used.update(frozenset(e) for e in zip(leg[:-1], leg[1:]))
+            traveled += leg_m
+            current = anchor
+            placements.append({
+                "node": anchor, "at_m": traveled, "terrain": terrain,
+                "place_name": anchors[terrain].get(anchor),
+            })
+            break
+        else:
+            return None
+
+    # Last leg to the end takes whatever distance is left, so small misses
+    # on earlier legs even out
+    final_target = target_distance - traveled
+    # For a loop with no stops placed yet, current is already the end node,
+    # but the whole walk is still ahead of it
+    if current != end_node or len(path) == 1:
+        try:
+            leg, leg_m, steps = find_path_with_restarts(
+                G, current, end_node, max(final_target, 1.0),
+                tolerance=target_distance * tolerance / max(final_target, 1.0),
+                forbidden_edges=frozenset(used), **LEG_SEARCH,
+            )
+        except UnreachableError:
+            return None
+        total_steps += steps
+        if leg is None:
+            return None
+        path += leg[1:]
+        traveled += leg_m
+
+    for i, p in enumerate(placements):
+        if p is None:
+            placements[i] = {"node": path[-1], "at_m": traveled, "terrain": None, "place_name": None}
+    return path, traveled, total_steps, placements
+
+
+def _anchor_candidates(G, current, end_node, leg_target, remaining_after, stop, anchors, dist_to_end):
+    """
+    Anchor nodes for a stop, best first: the stop's own terrain before its
+    fallbacks, and within each terrain in random order. An anchor has to be
+    reachable from the current point within the leg's budget, and close
+    enough to the end that the rest of the walk can still get there.
+    """
+    lo, hi = ANCHOR_WINDOW
+    if leg_target < 300:
+        lo = 0.0  # a stop due almost immediately: anything close will do
+    reach = nx.single_source_dijkstra_path_length(G, current, cutoff=leg_target * hi, weight="length")
+
+    candidates = []
+    for terrain in stop["terrains"]:
+        nodes = [
+            n for n in anchors.get(terrain, {})
+            if n != current and n != end_node
+            and lo * leg_target <= reach.get(n, float("inf")) <= hi * leg_target
+            and dist_to_end.get(n, float("inf")) <= remaining_after * 0.9
+        ]
+        random.shuffle(nodes)
+        # Named places first ("Gardner Marsh" beats an unnamed patch of woods)
+        nodes.sort(key=lambda n: anchors[terrain][n] is None)
+        candidates += [(n, terrain) for n in nodes]
+    return candidates

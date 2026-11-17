@@ -2,7 +2,8 @@ import networkx as nx
 import pytest
 
 from graph_utils import points_along_path, path_length
-from journeys import JOURNEYS, JOURNEYS_BY_ID
+from journeys import JOURNEYS, JOURNEYS_BY_ID, stops_due, next_stop
+from features import TERRAINS
 
 
 # --- Journey data ---
@@ -13,13 +14,44 @@ def test_journey_ids_unique():
 
 @pytest.mark.parametrize("journey", JOURNEYS, ids=lambda j: j["id"])
 def test_journey_stops_are_well_formed(journey):
-    for key in ["id", "title", "source", "blurb", "suggested_km", "loop", "stops"]:
+    for key in ["id", "title", "source", "blurb", "total_km", "distance_note", "stops"]:
         assert key in journey
-    ats = [s["at"] for s in journey["stops"]]
-    assert len(ats) >= 2
-    assert ats[0] == 0 and ats[-1] == 1
-    assert ats == sorted(ats), "stops out of order"
-    assert all(s["name"] for s in journey["stops"])
+    kms = [s["km"] for s in journey["stops"]]
+    assert kms[0] == 0
+    assert kms[-1] == journey["total_km"]
+    assert kms == sorted(kms) and len(set(kms)) == len(kms), "stops out of order or duplicated"
+    for s in journey["stops"]:
+        assert s["name"]
+        assert s["terrain"] in TERRAINS
+
+
+def test_frodo_stage_totals_match_fonstad():
+    # Rivendell at 735km and Mount Doom at 2,865km, per Fonstad's Atlas
+    stops = {s["name"]: s["km"] for s in JOURNEYS_BY_ID["frodo"]["stops"]}
+    assert stops["Rivendell"] == 735
+    assert stops["Mount Doom"] == 2865
+
+
+# --- Which stops a walk reaches ---
+
+def test_stops_due_on_a_walk():
+    frodo = JOURNEYS_BY_ID["frodo"]
+    assert [s["name"] for s in stops_due(frodo, 730, 10)] == ["Rivendell"]
+    assert stops_due(frodo, 0, 5) == []  # the start stop never counts as reached
+    assert [s["name"] for s in stops_due(frodo, 2670, 10)] == ["Cirith Ungol"]
+    assert [s["name"] for s in stops_due(frodo, 2630, 50)] == ["Minas Morgul", "Cirith Ungol"]
+
+
+def test_stop_exactly_at_walk_end_is_due():
+    frodo = JOURNEYS_BY_ID["frodo"]
+    assert [s["name"] for s in stops_due(frodo, 730, 5)] == ["Rivendell"]
+
+
+def test_next_stop():
+    frodo = JOURNEYS_BY_ID["frodo"]
+    assert next_stop(frodo, 0)["name"] == "Bucklebury Ferry"
+    assert next_stop(frodo, 735)["name"] == "The gates of Moria"
+    assert next_stop(frodo, 2865) is None
 
 
 # --- points_along_path ---

@@ -1,5 +1,7 @@
-// Fantasy Trail frontend: pick a journey, set a distance and start point,
-// and draw the route with the journey's stops placed along it.
+// Fantasy Trail frontend. A journey keeps its real story length and is
+// walked over many outings: each walk covers the next stretch, its stops
+// land on matching real places, and "I walked it" saves the progress in
+// this browser.
 
 const KM_PER_MI = 1.609344;
 const PRESETS_KM = [3, 5, 8, 10];
@@ -16,6 +18,43 @@ const state = {
 };
 
 const layers = { start: null, end: null, route: null, landmarks: null, region: null };
+
+// What each terrain is called when telling someone where a stop landed
+const TERRAIN_WORDS = {
+  forest: "woods", water: "water", marsh: "wetland", meadow: "meadow", park: "a park",
+  town: "the shops", hill: "a hilltop", tower: "a tower", bridge: "a bridge", tunnel: "a tunnel",
+};
+
+// ---------- Saved progress (this browser only) ----------
+// { journeyId: { walked_km, log: [{ date, km, stops: [names] }] } }
+
+function load(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function save(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Private mode or storage blocked: progress just won't persist
+  }
+}
+
+function progressFor(id) {
+  const all = load("progress", {});
+  return all[id] || { walked_km: 0, log: [] };
+}
+
+function setProgress(id, progress) {
+  const all = load("progress", {});
+  all[id] = progress;
+  save("progress", all);
+}
 let lastResult = null; // last /route response, kept so a unit switch can re-label it
 
 const $ = (id) => document.getElementById(id);
@@ -63,7 +102,10 @@ function renderPresets() {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = `${+kmToUnit(km).toFixed(1)} ${state.unit}`;
-    b.addEventListener("click", () => setDistanceKm(km));
+    b.addEventListener("click", () => {
+      setDistanceKm(km);
+      save("walk_km", km);
+    });
     presetsDiv.appendChild(b);
   }
 }
@@ -77,6 +119,7 @@ document.querySelectorAll("[data-unit]").forEach((b) =>
     setDistanceKm(km);
     renderPresets();
     if (lastResult) showResult(lastResult); // re-label distances
+    renderProgress();
   })
 );
 
@@ -84,12 +127,66 @@ document.querySelectorAll("[data-unit]").forEach((b) =>
 
 function selectJourney(j) {
   state.journey = j;
+  save("journey", j.id);
   for (const card of journeysDiv.children) {
     card.setAttribute("aria-checked", card.dataset.id === j.id ? "true" : "false");
   }
-  setDistanceKm(j.suggested_km);
-  setMode(j.loop);
+  clearRoute();
+  renderProgress();
 }
+
+function renderProgress() {
+  const j = state.journey;
+  const panel = $("progress");
+  if (!j) return (panel.hidden = true);
+  panel.hidden = false;
+  const p = progressFor(j.id);
+  const pct = Math.min(100, (p.walked_km / j.total_km) * 100);
+  panel.querySelector(".fill").style.width = `${pct}%`;
+  panel.querySelector(".bar").setAttribute("aria-valuenow", pct.toFixed(1));
+  $("progress-text").textContent =
+    `${formatDistance(p.walked_km * 1000)} of ${formatDistance(j.total_km * 1000)} walked`;
+
+  const next = j.stops.find((s) => s.km > p.walked_km + 1e-9);
+  const finished = !next;
+  $("next-stop").textContent = finished
+    ? `You've reached ${j.stops[j.stops.length - 1].name}. Journey complete!`
+    : `Next: ${next.name} in ${formatDistance((next.km - p.walked_km) * 1000)}`;
+  findButton.disabled = finished;
+
+  const stamps = $("stamps");
+  stamps.innerHTML = "";
+  const reached = [];
+  for (const walk of p.log) for (const name of walk.stops) reached.push({ name, date: walk.date });
+  for (const r of reached) {
+    const li = document.createElement("li");
+    li.textContent = r.name + " ";
+    const when = document.createElement("span");
+    when.className = "when";
+    when.textContent = new Date(r.date).toLocaleDateString();
+    li.appendChild(when);
+    stamps.appendChild(li);
+  }
+  $("undo").hidden = p.log.length === 0;
+  $("restart").hidden = p.log.length === 0;
+}
+
+$("undo").addEventListener("click", () => {
+  const p = progressFor(state.journey.id);
+  const last = p.log.pop();
+  if (!last) return;
+  p.walked_km = Math.max(0, p.walked_km - last.km);
+  setProgress(state.journey.id, p);
+  clearRoute();
+  renderProgress();
+});
+
+$("restart").addEventListener("click", () => {
+  if (!confirm(`Start ${state.journey.title} over from the beginning? Your progress will be cleared.`)) return;
+  setProgress(state.journey.id, { walked_km: 0, log: [] });
+  clearRoute();
+  renderProgress();
+});
 
 function renderJourneys() {
   journeysDiv.innerHTML = "";
@@ -106,8 +203,9 @@ function renderJourneys() {
       <div class="meta"></div>`;
     card.querySelector(".title").textContent = j.title;
     card.querySelector(".blurb").textContent = j.blurb;
+    const walks = Math.round(j.total_km / 5);
     card.querySelector(".meta").textContent =
-      `${j.stops.length} stops · ${j.loop ? "loop" : "one way"} · ${j.source}`;
+      `${j.total_km.toLocaleString()} km · ${j.stops.length} stops · about ${walks} walks of 5 km · ${j.source}`;
     card.addEventListener("click", () => selectJourney(j));
     journeysDiv.appendChild(card);
   }
@@ -118,7 +216,8 @@ fetch("journeys")
   .then((list) => {
     state.journeys = list;
     renderJourneys();
-    if (list.length) selectJourney(list[0]);
+    const saved = list.find((j) => j.id === load("journey", null));
+    if (list.length) selectJourney(saved || list[0]);
   })
   .catch(() => {
     journeysDiv.textContent = "Couldn't load journeys. Is the server running?";
@@ -167,14 +266,26 @@ map.on("click", (e) => {
     return;
   }
   if (!state.start) {
-    state.start = e.latlng;
-    layers.start = L.marker(e.latlng, { icon: pinIcon("S", "endpoint"), title: "Start" }).addTo(map);
+    setStart(e.latlng);
+    save("home", { lat: e.latlng.lat, lng: e.latlng.lng });
   } else if (!state.loop && !state.end) {
     state.end = e.latlng;
     layers.end = L.marker(e.latlng, { icon: pinIcon("F", "endpoint"), title: "Finish" }).addTo(map);
   }
   updateHint();
 });
+
+function setStart(latlng) {
+  state.start = latlng;
+  layers.start = L.marker(latlng, { icon: pinIcon("S", "endpoint"), title: "Start" }).addTo(map);
+  // Start downloading nearby real places now, so stops can land on them
+  // by the time a route is requested
+  fetch("features", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lat: latlng.lat, lon: latlng.lng }),
+  }).catch(() => {});
+}
 
 function clearRoute() {
   for (const key of ["route", "landmarks"]) {
@@ -195,7 +306,10 @@ function resetPoints() {
   updateHint();
 }
 
-$("reset").addEventListener("click", resetPoints);
+$("reset").addEventListener("click", () => {
+  resetPoints();
+  save("home", null);
+});
 
 // ---------- Region (city) ----------
 
@@ -220,6 +334,14 @@ function useRegion(region, place = region) {
   map.setView([place.lat, place.lon], 14);
   const cap = region.max_target_m ? ` · walks up to ${formatDistance(region.max_target_m)}` : "";
   setRegionStatus(`Walking in <strong>${escapeHtml(place.name)}</strong>${cap}`);
+
+  // Put back the remembered start point if it's in this map area
+  const home = load("home", null);
+  if (home && map.distance([home.lat, home.lng], [region.lat, region.lon]) <= region.radius_m) {
+    setStart(L.latLng(home.lat, home.lng));
+    map.setView([home.lat, home.lng], 14);
+    updateHint();
+  }
 }
 
 function waitForRegion(region, place) {
@@ -300,6 +422,15 @@ function showError(message) {
   stopsList.innerHTML = "";
 }
 
+// Where a stop landed, in words: "in Lost City Forest", "at real woods
+// (no hilltop nearby)", or "along your route" when nothing matched
+function whereText(lm) {
+  if (!lm.landed_on) return "along your route";
+  const word = TERRAIN_WORDS[lm.landed_on];
+  const at = lm.place_name ? `in ${lm.place_name}` : `at real ${word.replace(/^a /, "")}`;
+  return lm.landed_on === lm.terrain ? at : `${at} (no ${TERRAIN_WORDS[lm.terrain].replace(/^a /, "")} nearby)`;
+}
+
 function showResult(data) {
   lastResult = data;
   resultSection.hidden = false;
@@ -307,21 +438,51 @@ function showResult(data) {
   const head = data.within_tolerance
     ? `${formatDistance(data.distance_m)} ${data.loop ? "loop" : "route"}, ${Math.round(data.trail_pct)}% on trails.`
     : `<span class="warn">Couldn't fit ${formatDistance(data.target_m)} here; this is the closest route: ${formatDistance(data.distance_m)}, ${Math.round(data.trail_pct)}% on trails.</span>`;
-  summary.innerHTML = `<strong>${escapeHtml(state.journey.title)}</strong><br>${head}`;
+  const reach = data.landmarks.length
+    ? `Today you reach ${data.landmarks.map((lm) => escapeHtml(lm.name)).join(" and ")}.`
+    : "No stops on today's stretch, just the road.";
+  // Real places near a new start take a few minutes to download the first
+  // time; until then stops are placed along the route instead
+  const pending = data.landmarks.length && !data.features_ready
+    ? `<br><span class="warn">Still finding real woods, water and landmarks near you, so today's stops are placed along your route. Try again in a few minutes.</span>`
+    : "";
+  summary.innerHTML = `${head}<br>${reach}${pending}`;
 
   stopsList.innerHTML = "";
   data.landmarks.forEach((lm, i) => {
     const li = document.createElement("li");
-    li.innerHTML = `<span class="name"></span><span class="dist"></span>`;
-    li.querySelector(".name").textContent = lm.name;
-    li.querySelector(".dist").textContent = i === 0 ? "start" : formatDistance(lm.at_m);
+    li.innerHTML = `<span class="name"><span class="title"></span><span class="where"></span></span><span class="dist"></span>`;
+    li.querySelector(".title").textContent = lm.name;
+    li.querySelector(".where").textContent = whereText(lm);
+    li.querySelector(".dist").textContent = `${formatDistance(lm.at_m)} in`;
     li.addEventListener("click", () => {
       map.setView([lm.lat, lm.lon], Math.max(map.getZoom(), 16));
       layers.landmarks.getLayers()[i].openPopup();
     });
     stopsList.appendChild(li);
   });
+
+  const j = data.journey;
+  $("after").textContent = j.finished
+    ? `This walk finishes ${state.journey.title}.`
+    : `After this walk: ${j.next_stop.name} in ${formatDistance(j.next_stop.km_away * 1000)}.`;
+  const walked = $("walked");
+  walked.disabled = false;
+  walked.textContent = "I walked it";
 }
+
+$("walked").addEventListener("click", () => {
+  const data = lastResult;
+  if (!data) return;
+  const p = progressFor(state.journey.id);
+  p.walked_km = data.journey.progress_after_km;
+  p.log.push({ date: new Date().toISOString(), km: data.journey.credit_km, stops: data.landmarks.map((lm) => lm.name) });
+  setProgress(state.journey.id, p);
+  const walked = $("walked");
+  walked.disabled = true;
+  walked.textContent = "Added to your journey";
+  renderProgress();
+});
 
 function drawRoute(data) {
   clearRoute();
@@ -334,7 +495,7 @@ function drawRoute(data) {
   layers.landmarks = L.featureGroup(
     data.landmarks.map((lm, i) =>
       L.marker([lm.lat, lm.lon], { icon: pinIcon(i + 1), title: lm.name })
-        .bindPopup(() => `<strong>${escapeHtml(lm.name)}</strong><br>${i === 0 ? "Start here" : formatDistance(lm.at_m) + " in"}`)
+        .bindPopup(() => `<strong>${escapeHtml(lm.name)}</strong><br>${escapeHtml(whereText(lm))}<br>${formatDistance(lm.at_m)} into today's walk`)
     )
   ).addTo(map);
 
@@ -371,6 +532,7 @@ findButton.addEventListener("click", () => {
       end_lon: state.loop ? undefined : state.end.lng,
       target_distance_m: km * 1000,
       journey_id: state.journey.id,
+      progress_km: progressFor(state.journey.id).walked_km,
       region_id: state.region.id,
     }),
   })
@@ -381,11 +543,14 @@ findButton.addEventListener("click", () => {
     .then(drawRoute)
     .catch((err) => showError(err.message))
     .finally(() => {
-      findButton.disabled = false;
       findButton.textContent = "Find my route";
+      renderProgress(); // re-enables the button unless the journey is finished
     });
 });
 
+distanceInput.addEventListener("change", () => save("walk_km", unitToKm(parseFloat(distanceInput.value) || 5)));
+
 renderPresets();
+setDistanceKm(load("walk_km", 5));
 updateHint();
 useRegion(state.region);

@@ -4,12 +4,15 @@ A route-planning tool that generates real, walkable routes matching a target
 distance, built around a custom distance-constrained pathfinding algorithm
 over OpenStreetMap trail and road data.
 
-The idea is to walk a legendary journey in real life: pick a story like
-the road to Oz or the Odyssey, choose how far you want to walk, and get a
-real route near you with the story's stops placed along it. Underneath is
-the core mechanic: given a start point, an end point (or a loop), and a
-target distance, find a real route that matches, preferring trails over
-roads where they exist.
+The idea is to walk a legendary journey in real life, at its real length.
+Frodo's road from Bag End to Mount Doom is 2,865km, so you walk it 5 or
+10km at a time near home. Each walk covers the next stretch, progress is
+saved between walks, and when a walk reaches a stop on the journey, the
+route bends through a real place that matches it: Lothlórien in real
+woods, the Dead Marshes in a real wetland. Underneath is the core
+mechanic: given a start point, an end point (or a loop), and a target
+distance, find a real route that matches, preferring trails over roads
+where they exist.
 
 ## What it does
 
@@ -37,11 +40,13 @@ Vilas Park, mostly on real trail (footway/path), not sidewalks.
 - **Pathfinding**: a custom randomized DFS with backtracking, guided by a
   Dijkstra-precomputed feasibility bound, wrapped in bounded random
   restarts. See "Algorithm design" below for why this exists.
-- **API**: FastAPI loads the graph once at startup and exposes `/route`
-  and `/journeys`. It also serves the frontend.
-- **Frontend**: a small Leaflet app in `static/`. Pick a journey, set a
-  distance, click the map for a start (and finish, for one-way routes), and
-  the route is drawn with the journey's stops along it.
+- **API**: FastAPI loads the graph once at startup and exposes `/route`,
+  `/journeys`, and endpoints for preparing other cities and nearby real
+  places. It also serves the frontend.
+- **Frontend**: a small Leaflet app in `static/`. Pick a journey, choose
+  today's distance, click the map for a start (and finish, for one-way
+  routes), and the route is drawn with any stops it reaches. "I walked it"
+  adds the walk to your progress, saved in the browser.
 - **Tests**: `venv/bin/python -m pytest` runs a fast suite on small
   synthetic graphs, so it doesn't need the regional GraphML.
 
@@ -56,19 +61,47 @@ regional graph loads.
 
 ## Journeys
 
-Journeys live in `journeys.py`. Each one is a list of stops with an `at`
-value from 0 to 1: how far along the story's journey that stop falls. A
-walk of any length places the stops at those same fractions, so on a 5km
-walk to Oz the Emerald City comes up at 2.1km. The fractions are rough,
-taken from story order and, where the story has real or commonly estimated
-geography, approximate distances between places.
+Journeys live in `journeys.py`, each with its real story length and the
+distance of every stop from the start:
 
-The journeys come from public-domain works (Baum, Homer, Carroll, Wu
-Cheng'en, Verne), so they can be shown freely. The one exception is "The
-Fellowship's Road", which uses Tolkien place names only (no quotes, maps
-or art) for personal use. It's a single entry at the end of `journeys.py`
-and nothing else depends on it, so remove it before publishing the app
-anywhere public.
+- **Frodo's Road**, Bag End to Mount Doom, 2,865km. Every stage is from
+  Karen Wynn Fonstad's *The Atlas of Middle-earth*, measured on Tolkien's
+  own maps.
+- **Bilbo's Road**, Bag End to the Lonely Mountain, 1,529km (950mi). The
+  total and the Rivendell stage are from LOTRProject; no published source
+  gives the later stages, so those stops are estimated from the map.
+
+A journey is walked over many outings. You pick each walk's length, and it
+covers the next stretch of the journey: from 730km into Frodo's road, a
+10km walk reaches Rivendell at 735km. The last walk is cut to whatever's
+left.
+
+Both journeys are from Tolkien's works, used with place names only (no
+quotes, maps or art) for personal use. They are not public domain, so
+replace them before publishing the app anywhere public. Public-domain
+journeys considered and set aside: Oz, Alice and Jules Verne's journeys
+give no walkable distance or are far too long (Around the World is about
+40,000km), Sir Gawain's route has no sourced distance, and the Odyssey
+measures about 4,900km between its traditionally identified places.
+
+## Stops on real places
+
+Each stop has a terrain: forest, water, marsh, meadow, park, town, hill,
+tower, bridge or tunnel, each with fallbacks (a hill falls back to a
+tower, then woods). When a walk reaches a stop, it's routed in legs
+(start, through a matching real place at about the right distance, then
+on to the end), with each leg a normal distance-matched search that may
+not reuse a segment an earlier leg took. From the UW campus, Lothlórien
+lands in Muir Woods. From the Arboretum, the Dead Marshes land in
+Gardner Marsh.
+
+Bridges and tunnels come straight from the walk network's OSM tags. The
+other terrains need OSM features the walk network doesn't include
+(woods, water, wetland...), downloaded in the background for about 10km
+around wherever someone starts and cached to `cache/features/`. Until
+they arrive, and whenever no matching place fits, a stop is placed at its
+proportional point along an ordinary route instead. The page says so,
+and the walk's length always wins over the stop's terrain.
 
 ## Other cities
 
@@ -195,6 +228,11 @@ Loops use the shorter, more numerous attempts.
 - A city's first map takes minutes to prepare, depending on the public
   Overpass API's load. The API is free and shared, so heavy use of this
   app would need its own OSM data source.
+- Stops can only land on places OpenStreetMap has mapped. Madison has no
+  mapped peaks near most starts, so Weathertop usually falls back to
+  woods, and water within reach of a short leg can be scarce.
+- Progress lives in one browser's local storage: clearing site data or
+  switching devices loses it, and "I walked it" is the honor system.
 - Route quality (trail vs. road percentage) depends heavily on how much
   real trail exists near the chosen start/end points; urban-only requests
   will be sidewalk-heavy by nature of the underlying data.

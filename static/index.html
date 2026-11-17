@@ -13,12 +13,22 @@
   <aside id="panel">
     <header>
       <h1>Fantasy Trail</h1>
-      <p class="tagline">Walk a legendary journey on real trails near you.</p>
+      <p class="tagline">Walk a legendary journey at its real length, one walk at a time, on real trails near you.</p>
     </header>
 
     <section class="step">
       <h2><span class="num">1</span> Choose a journey</h2>
       <div id="journeys" class="journeys" role="radiogroup" aria-label="Journey"></div>
+      <div id="progress" class="progress" hidden>
+        <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div>
+        <p id="progress-text" class="progress-text"></p>
+        <p id="next-stop" class="next-stop"></p>
+        <ol id="stamps" class="stamps"></ol>
+        <div class="progress-actions">
+          <button id="undo" type="button">Undo last walk</button>
+          <button id="restart" type="button">Restart journey</button>
+        </div>
+      </div>
     </section>
 
     <section class="step">
@@ -34,7 +44,7 @@
     </section>
 
     <section class="step">
-      <h2><span class="num">3</span> Your walk</h2>
+      <h2><span class="num">3</span> Today's walk</h2>
       <div class="row">
         <label for="distance">Distance</label>
         <input id="distance" type="number" min="0.5" step="0.5" value="5" />
@@ -59,9 +69,13 @@
     </section>
 
     <section id="result" class="step result" hidden>
-      <h2>Your journey</h2>
+      <h2>Today's stretch</h2>
       <p id="summary" class="summary"></p>
       <ol id="stops" class="stops"></ol>
+      <p id="after" class="after"></p>
+      <div class="actions">
+        <button id="walked" class="primary" type="button">I walked it</button>
+      </div>
       <p class="legend">
         <span class="swatch trail"></span>Trail
         <span class="swatch road"></span>Road
