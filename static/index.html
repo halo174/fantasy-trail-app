@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fantasy Trail</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+  <aside id="panel">
+    <header>
+      <h1>Fantasy Trail</h1>
+      <p class="tagline">Walk a legendary journey on real trails near you.</p>
+    </header>
+
+    <section class="step">
+      <h2><span class="num">1</span> Choose a journey</h2>
+      <div id="journeys" class="journeys" role="radiogroup" aria-label="Journey"></div>
+    </section>
+
+    <section class="step">
+      <h2><span class="num">2</span> Where you'll walk</h2>
+      <div id="where" class="where">
+        <span class="place">Madison, WI</span>
+      </div>
+    </section>
+
+    <section class="step">
+      <h2><span class="num">3</span> Your walk</h2>
+      <div class="row">
+        <label for="distance">Distance</label>
+        <input id="distance" type="number" min="0.5" step="0.5" value="5" />
+        <div class="segmented" role="group" aria-label="Units">
+          <button type="button" data-unit="km" class="active">km</button>
+          <button type="button" data-unit="mi">mi</button>
+        </div>
+      </div>
+      <div id="presets" class="presets"></div>
+      <div class="row">
+        <span class="label">Route</span>
+        <div class="segmented" role="group" aria-label="Route type">
+          <button type="button" data-mode="loop" class="active">Loop</button>
+          <button type="button" data-mode="ab">A → B</button>
+        </div>
+      </div>
+      <p id="hint" class="hint">Click the map to set your start.</p>
+      <div class="actions">
+        <button id="find" class="primary" type="button">Find my route</button>
+        <button id="reset" type="button">Reset points</button>
+      </div>
+    </section>
+
+    <section id="result" class="step result" hidden>
+      <h2>Your journey</h2>
+      <p id="summary" class="summary"></p>
+      <ol id="stops" class="stops"></ol>
+      <p class="legend">
+        <span class="swatch trail"></span>Trail
+        <span class="swatch road"></span>Road
+      </p>
+    </section>
+  </aside>
+
+  <main id="map" aria-label="Map"></main>
+
+  <script src="app.js"></script>
+</body>
+</html>

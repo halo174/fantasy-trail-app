@@ -1,13 +1,16 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from pathlib import Path
+
 import osmnx as ox
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from fastapi.middleware.cors import CORSMiddleware
 
 from pathfinding import find_path_with_restarts, within_tolerance, UnreachableError
+from graph_utils import to_simple_graph, highway_breakdown, get_bridges, points_along_path, TRAIL_TYPES
+from journeys import JOURNEYS, JOURNEYS_BY_ID
 
-from graph_utils import to_simple_graph, highway_breakdown, get_bridges, TRAIL_TYPES
+STATIC_DIR = Path(__file__).parent / "static"
 
 state = {}
 
@@ -31,18 +34,20 @@ async def lifespan(app: FastAPI):
     state.clear()
 
 
+# The frontend is served from this same app (mounted at the bottom of this
+# file), so the page calls the API same-origin and needs no CORS.
 app = FastAPI(lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 @app.get("/health")
 def health():
     return {"status": "ok", "nodes": len(state["G"].nodes)}
+
+
+@app.get("/journeys")
+def journeys():
+    return JOURNEYS
+
 
 class RouteRequest(BaseModel):
     start_lat: float
@@ -51,12 +56,20 @@ class RouteRequest(BaseModel):
     end_lat: float | None = None
     end_lon: float | None = None
     target_distance_m: float
+    # Optional: place this journey's stops along the route as landmarks
+    journey_id: str | None = None
 
 
 @app.post("/route")
 def route(req: RouteRequest):
     G = state["G"]
     G_multi = state["G_multi"]
+
+    journey = None
+    if req.journey_id is not None:
+        journey = JOURNEYS_BY_ID.get(req.journey_id)
+        if journey is None:
+            raise HTTPException(status_code=400, detail=f"Unknown journey: {req.journey_id}")
 
     start_node = ox.distance.nearest_nodes(G_multi, req.start_lon, req.start_lat)
     if (req.end_lat is None) != (req.end_lon is None):
@@ -98,6 +111,15 @@ def route(req: RouteRequest):
         else:
             segments.append({"trail": is_trail, "path": [coords[i], coords[i + 1]]})
 
+    landmarks = []
+    if journey is not None:
+        stops = journey["stops"]
+        points = points_along_path(G, path, [s["at"] for s in stops])
+        landmarks = [
+            {"name": s["name"], "lat": p["lat"], "lon": p["lon"], "at_m": round(p["at_m"], 1)}
+            for s, p in zip(stops, points)
+        ]
+
     return {
         "loop": loop,
         "distance_m": round(length, 1),
@@ -111,4 +133,9 @@ def route(req: RouteRequest):
         "trail_pct": round(trail_m / length * 100, 1),
         "breakdown": [{"highway": h, "meters": round(l, 1)} for h, l in breakdown],
         "segments": segments,
+        "landmarks": landmarks,
     }
+
+
+# Last, so the API routes above take precedence over static files
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

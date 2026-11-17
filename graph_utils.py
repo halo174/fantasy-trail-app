@@ -41,6 +41,34 @@ def path_length(G, path):
     return length
 
 
+def points_along_path(G, path, fractions):
+    """
+    Map positions at the given fractions (0-1, ascending) of a path's length.
+    Interpolates linearly inside the edge where each fraction falls, so a
+    point can land between nodes. Returns [{"lat", "lon", "at_m"}] in order.
+    """
+    total = path_length(G, path)
+    points = []
+    traveled = 0.0
+    i = 0  # index of the edge (path[i], path[i+1]) being walked
+    for f in fractions:
+        target = f * total
+        # Advance to the edge that contains target. The last edge absorbs
+        # any floating-point overshoot at f == 1.
+        while i < len(path) - 2 and traveled + G[path[i]][path[i + 1]]["length"] < target:
+            traveled += G[path[i]][path[i + 1]]["length"]
+            i += 1
+        u, v = path[i], path[i + 1]
+        edge = G[u][v]["length"]
+        t = 0.0 if edge == 0 else min(max((target - traveled) / edge, 0.0), 1.0)
+        points.append({
+            "lat": G.nodes[u]["y"] + t * (G.nodes[v]["y"] - G.nodes[u]["y"]),
+            "lon": G.nodes[u]["x"] + t * (G.nodes[v]["x"] - G.nodes[u]["x"]),
+            "at_m": target,
+        })
+    return points
+
+
 def highway_breakdown(G, path):
     """Meters of a path on each highway type, largest first. G is the simple graph."""
     totals = defaultdict(float)

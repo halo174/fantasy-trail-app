@@ -4,12 +4,12 @@ A route-planning tool that generates real, walkable routes matching a target
 distance, built around a custom distance-constrained pathfinding algorithm
 over OpenStreetMap trail and road data.
 
-The original idea was mapping fictional journey distances (Shire to Mordor,
-Winterfell to King's Landing) onto real-world walks. That framing raised
-copyright concerns around using named fictional IP, so the project focuses
-on the underlying mechanic: given a start point, an end point, and a target
-distance, find a real route that matches, preferring trails over roads
-where they exist.
+The idea is to walk a legendary journey in real life: pick a story like
+the road to Oz or the Odyssey, choose how far you want to walk, and get a
+real route near you with the story's stops placed along it. Underneath is
+the core mechanic: given a start point, an end point (or a loop), and a
+target distance, find a real route that matches, preferring trails over
+roads where they exist.
 
 ## What it does
 
@@ -37,12 +37,38 @@ Vilas Park, mostly on real trail (footway/path), not sidewalks.
 - **Pathfinding**: a custom randomized DFS with backtracking, guided by a
   Dijkstra-precomputed feasibility bound, wrapped in bounded random
   restarts. See "Algorithm design" below for why this exists.
-- **API**: FastAPI loads the graph once at startup and exposes `/route`.
-- **Frontend**: a single-page Leaflet map; click to set start/end points
-  (or just a start, for a loop), enter a target distance, and the matched
-  route is drawn live.
+- **API**: FastAPI loads the graph once at startup and exposes `/route`
+  and `/journeys`. It also serves the frontend.
+- **Frontend**: a small Leaflet app in `static/`. Pick a journey, set a
+  distance, click the map for a start (and finish, for one-way routes), and
+  the route is drawn with the journey's stops along it.
 - **Tests**: `venv/bin/python -m pytest` runs a fast suite on small
   synthetic graphs, so it doesn't need the regional GraphML.
+
+## Running it
+
+```
+venv/bin/uvicorn api:app
+```
+
+Then open http://127.0.0.1:8000/. Startup takes about a minute while the
+regional graph loads.
+
+## Journeys
+
+Journeys live in `journeys.py`. Each one is a list of stops with an `at`
+value from 0 to 1: how far along the story's journey that stop falls. A
+walk of any length places the stops at those same fractions, so on a 5km
+walk to Oz the Emerald City comes up at 2.1km. The fractions are rough,
+taken from story order and, where the story has real or commonly estimated
+geography, approximate distances between places.
+
+The journeys come from public-domain works (Baum, Homer, Carroll, Wu
+Cheng'en, Verne), so they can be shown freely. The one exception is "The
+Fellowship's Road", which uses Tolkien place names only (no quotes, maps
+or art) for personal use. It's a single entry at the end of `journeys.py`
+and nothing else depends on it, so remove it before publishing the app
+anywhere public.
 
 ## Algorithm design: why this isn't just shortest-path
 
