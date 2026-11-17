@@ -9,8 +9,10 @@ from pydantic import BaseModel
 from pathfinding import find_path_with_restarts, within_tolerance, UnreachableError
 from graph_utils import to_simple_graph, highway_breakdown, get_bridges, points_along_path, TRAIL_TYPES
 from journeys import JOURNEYS, JOURNEYS_BY_ID
+from regions import RegionStore, RegionNotReady, geocode_us
 
 STATIC_DIR = Path(__file__).parent / "static"
+MADISON_ID = "madison"
 
 state = {}
 
@@ -25,11 +27,14 @@ POINT_TO_POINT_SEARCH = {"max_restarts": 3}
 async def lifespan(app: FastAPI):
     print("Loading graph...")
     G_multi = ox.load_graphml("madison_50mi_tiled_walk_network.graphml")
-    state["G_multi"] = G_multi
-    state["G"] = to_simple_graph(G_multi)
+    G = to_simple_graph(G_multi)
     print("Finding bridges for loop routing...")
-    get_bridges(state["G"])  # ~6s, cached on the graph so loop requests don't pay it
-    print(f"Graph ready: {len(state['G'].nodes)} nodes")
+    get_bridges(G)  # ~6s, cached on the graph so loop requests don't pay it
+    store = RegionStore()
+    # Center and 50-mile radius the regional graph was pulled with
+    store.add_permanent(MADISON_ID, "Madison, WI", 43.0731, -89.4012, 80467, G_multi, G)
+    state["regions"] = store
+    print(f"Graph ready: {len(G.nodes)} nodes")
     yield
     state.clear()
 
@@ -41,12 +46,43 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "nodes": len(state["G"].nodes)}
+    madison = state["regions"].get(MADISON_ID)
+    return {"status": "ok", "nodes": len(madison.G.nodes)}
 
 
 @app.get("/journeys")
 def journeys():
     return JOURNEYS
+
+
+@app.get("/geocode")
+def geocode(q: str):
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="Enter a city to search for")
+    try:
+        return geocode_us(q)
+    except Exception:
+        raise HTTPException(status_code=502, detail="City search is unavailable right now. Try again in a moment.")
+
+
+class RegionRequest(BaseModel):
+    lat: float
+    lon: float
+    name: str
+
+
+@app.post("/regions")
+def create_region(req: RegionRequest):
+    """Get a map region ready for a city. Poll GET /regions/{id} until status is ready."""
+    return state["regions"].ensure_region(req.lat, req.lon, req.name).info()
+
+
+@app.get("/regions/{region_id}")
+def region_status(region_id: str):
+    region = state["regions"].get(region_id)
+    if region is None:
+        raise HTTPException(status_code=404, detail="Unknown region")
+    return region.info()
 
 
 class RouteRequest(BaseModel):
@@ -58,12 +94,29 @@ class RouteRequest(BaseModel):
     target_distance_m: float
     # Optional: place this journey's stops along the route as landmarks
     journey_id: str | None = None
+    region_id: str = MADISON_ID
 
 
 @app.post("/route")
 def route(req: RouteRequest):
-    G = state["G"]
-    G_multi = state["G_multi"]
+    try:
+        region = state["regions"].get_for_route(req.region_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown region. Pick your city again.")
+    except RegionNotReady as e:
+        raise HTTPException(status_code=409, detail=f"That city's map isn't ready: {e}")
+    G, G_multi = region.G, region.G_multi
+
+    points = [(req.start_lat, req.start_lon)]
+    if req.end_lat is not None and req.end_lon is not None:
+        points.append((req.end_lat, req.end_lon))
+    if not all(region.contains(lat, lon) for lat, lon in points):
+        raise HTTPException(status_code=400, detail=f"Pick points inside the {region.name} map area.")
+    if region.max_target_m and req.target_distance_m > region.max_target_m:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Walks in {region.name} can be up to {region.max_target_m / 1000:.0f}km.",
+        )
 
     journey = None
     if req.journey_id is not None:

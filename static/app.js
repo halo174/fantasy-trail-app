@@ -6,6 +6,7 @@ const PRESETS_KM = [3, 5, 8, 10];
 const MADISON = [43.06, -89.40];
 
 const state = {
+  region: { id: "madison", name: "Madison, WI", lat: 43.0731, lon: -89.4012, radius_m: 80467, max_target_m: null },
   journeys: [],
   journey: null,
   unit: "km",
@@ -14,7 +15,7 @@ const state = {
   end: null,
 };
 
-const layers = { start: null, end: null, route: null, landmarks: null };
+const layers = { start: null, end: null, route: null, landmarks: null, region: null };
 let lastResult = null; // last /route response, kept so a unit switch can re-label it
 
 const $ = (id) => document.getElementById(id);
@@ -159,6 +160,12 @@ document.querySelectorAll("[data-mode]").forEach((b) =>
 );
 
 map.on("click", (e) => {
+  if (!state.region) return;
+  const inside = map.distance(e.latlng, [state.region.lat, state.region.lon]) <= state.region.radius_m;
+  if (!inside) {
+    hint.textContent = `That's outside the ${state.region.name} map area. Click inside the circle.`;
+    return;
+  }
   if (!state.start) {
     state.start = e.latlng;
     layers.start = L.marker(e.latlng, { icon: pinIcon("S", "endpoint"), title: "Start" }).addTo(map);
@@ -178,7 +185,7 @@ function clearRoute() {
   resultSection.hidden = true;
 }
 
-$("reset").addEventListener("click", () => {
+function resetPoints() {
   for (const key of ["start", "end"]) {
     if (layers[key]) map.removeLayer(layers[key]);
     layers[key] = null;
@@ -186,6 +193,101 @@ $("reset").addEventListener("click", () => {
   state.start = state.end = null;
   clearRoute();
   updateHint();
+}
+
+$("reset").addEventListener("click", resetPoints);
+
+// ---------- Region (city) ----------
+
+const regionStatus = $("region-status");
+const cityResults = $("city-results");
+let pollTimer = null;
+
+function setRegionStatus(html, cls = "") {
+  regionStatus.className = `region-status ${cls}`;
+  regionStatus.innerHTML = html;
+}
+
+// place is what the user picked. It can differ from the region: Middleton
+// is served by Madison's map, but the map should center on Middleton.
+function useRegion(region, place = region) {
+  state.region = region;
+  resetPoints();
+  if (layers.region) map.removeLayer(layers.region);
+  layers.region = L.circle([region.lat, region.lon], {
+    radius: region.radius_m, color: TRAIL_COLOR, weight: 1, fill: false, dashArray: "6 6", interactive: false,
+  }).addTo(map);
+  map.setView([place.lat, place.lon], 14);
+  const cap = region.max_target_m ? ` · walks up to ${formatDistance(region.max_target_m)}` : "";
+  setRegionStatus(`Walking in <strong>${escapeHtml(place.name)}</strong>${cap}`);
+}
+
+function waitForRegion(region, place) {
+  clearTimeout(pollTimer);
+  if (region.status === "ready") return useRegion(region, place);
+  if (region.status === "failed") {
+    state.region = null;
+    setRegionStatus(`${escapeHtml(region.error || "Couldn't load that city's map.")} <button type="button" id="retry">Try again</button>`, "error");
+    $("retry").addEventListener("click", () => chooseCity(place));
+    return;
+  }
+  state.region = null; // no clicks until the map is ready
+  setRegionStatus(`Preparing the map for <strong>${escapeHtml(place.name)}</strong>. The first time can take a few minutes while OpenStreetMap sends the data...`, "preparing");
+  map.setView([place.lat, place.lon], 13);
+  pollTimer = setTimeout(() => {
+    fetch(`regions/${encodeURIComponent(region.id)}`)
+      .then((r) => r.json())
+      .then((next) => waitForRegion(next, place))
+      .catch(() => waitForRegion(region, place)); // network blip: keep polling
+  }, 2000);
+}
+
+function chooseCity(place) {
+  cityResults.innerHTML = "";
+  setRegionStatus(`Preparing the map for <strong>${escapeHtml(place.name)}</strong>...`, "preparing");
+  fetch("regions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lat: place.lat, lon: place.lon, name: place.name }),
+  })
+    .then((r) => r.json())
+    .then((region) => waitForRegion(region, place))
+    .catch(() => setRegionStatus("Couldn't reach the server.", "error"));
+}
+
+$("city-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const q = $("city").value.trim();
+  if (!q) return;
+  cityResults.innerHTML = `<li class="empty">Searching...</li>`;
+  fetch(`geocode?q=${encodeURIComponent(q)}`)
+    .then((r) => r.json().then((body) => {
+      if (!r.ok) throw new Error(body.detail || "Search failed");
+      return body;
+    }))
+    .then((places) => {
+      cityResults.innerHTML = "";
+      if (!places.length) {
+        cityResults.innerHTML = `<li class="empty">No US places found. Try "City, State".</li>`;
+        return;
+      }
+      for (const place of places) {
+        const li = document.createElement("li");
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = place.name;
+        b.addEventListener("click", () => chooseCity(place));
+        li.appendChild(b);
+        cityResults.appendChild(li);
+      }
+    })
+    .catch((err) => {
+      cityResults.innerHTML = "";
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = err.message;
+      cityResults.appendChild(li);
+    });
 });
 
 // ---------- Finding and drawing a route ----------
@@ -246,6 +348,7 @@ function escapeHtml(s) {
 
 findButton.addEventListener("click", () => {
   if (!state.journey) return showError("Pick a journey first.");
+  if (!state.region) return showError("Wait for your city's map to finish preparing.");
   if (!state.start || (!state.loop && !state.end)) {
     return showError(state.loop
       ? "Click the map to set your start first."
@@ -268,6 +371,7 @@ findButton.addEventListener("click", () => {
       end_lon: state.loop ? undefined : state.end.lng,
       target_distance_m: km * 1000,
       journey_id: state.journey.id,
+      region_id: state.region.id,
     }),
   })
     .then((r) => r.json().catch(() => ({})).then((body) => {
@@ -284,3 +388,4 @@ findButton.addEventListener("click", () => {
 
 renderPresets();
 updateHint();
+useRegion(state.region);

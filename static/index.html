@@ -23,8 +23,13 @@
 
     <section class="step">
       <h2><span class="num">2</span> Where you'll walk</h2>
-      <div id="where" class="where">
-        <span class="place">Madison, WI</span>
+      <div class="where">
+        <p id="region-status" class="region-status">Walking in <strong>Madison, WI</strong></p>
+        <form id="city-form" class="city-form">
+          <input id="city" type="search" placeholder="Search a US city" autocomplete="off" aria-label="City" />
+          <button type="submit">Search</button>
+        </form>
+        <ul id="city-results" class="city-results"></ul>
       </div>
     </section>
 

@@ -78,13 +78,44 @@ header h1 { margin: 0; font-size: 1.5rem; letter-spacing: 0.01em; }
 .journey .blurb { margin-top: 2px; font-size: 0.9rem; }
 .journey .meta { margin-top: 4px; font-size: 0.78rem; color: var(--muted); }
 
-.where .place {
-  display: inline-block;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  font-weight: 500;
+.region-status { margin: 0 0 8px; }
+.region-status.preparing { color: var(--warn); }
+.region-status.error { color: var(--error); }
+.region-status button {
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
+.city-form { display: flex; gap: 6px; }
+.city-form input { flex: 1; min-width: 0; padding: 6px 8px; font: inherit; border: 1px solid var(--border); border-radius: 6px; }
+.city-form button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.city-results { margin: 6px 0 0; padding: 0; list-style: none; }
+.city-results li button {
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.city-results li button:hover { background: var(--accent-soft); }
+.city-results .empty { padding: 6px 8px; color: var(--muted); }
 
 .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .row label, .row .label { width: 64px; font-size: 0.9rem; color: var(--muted); }

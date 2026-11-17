@@ -70,6 +70,21 @@ or art) for personal use. It's a single entry at the end of `journeys.py`
 and nothing else depends on it, so remove it before publishing the app
 anywhere public.
 
+## Other cities
+
+Madison's 50-mile graph is built ahead of time. Any other US city gets
+its map on demand: the frontend searches for the city (OpenStreetMap's
+Nominatim, US results only), and the server pulls a walk network within
+6km of it in a background thread while the page shows a "preparing" state.
+Each city is pulled once and saved to `cache/regions/`, so it loads from
+disk in seconds after that. Only a few pulled cities stay in memory at a
+time. A city that falls inside Madison's area just uses Madison's graph.
+
+The wait for a new city is almost all download time from the public
+Overpass API, not processing: Decorah, Iowa took about 4 minutes to
+arrive and under 2 seconds to build. Pulled cities support walks up to
+12km, since a loop of length D can reach about D/2 from its start.
+
 ## Algorithm design: why this isn't just shortest-path
 
 Finding *a* path between two points is trivial (Dijkstra). Finding a path
@@ -177,6 +192,9 @@ Loops use the shorter, more numerous attempts.
   with restarts.
 - Very long loops (20km+) occasionally come back short of the target.
   The API flags this with `within_tolerance: false` and the map says so.
+- A city's first map takes minutes to prepare, depending on the public
+  Overpass API's load. The API is free and shared, so heavy use of this
+  app would need its own OSM data source.
 - Route quality (trail vs. road percentage) depends heavily on how much
   real trail exists near the chosen start/end points; urban-only requests
   will be sidewalk-heavy by nature of the underlying data.

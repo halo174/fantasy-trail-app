@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import api
 from journeys import JOURNEYS_BY_ID
+from regions import RegionStore, Region, PREPARING, FAILED
 
 # 0.0009 deg of latitude is about 100m, so this is roughly a 100m street grid
 STEP = 0.0009
@@ -38,12 +39,24 @@ def grid_map():
 
 
 @pytest.fixture
-def client(monkeypatch):
+def store(monkeypatch, tmp_path):
     random.seed(7)
     G_multi = grid_map()
-    monkeypatch.setitem(api.state, "G_multi", G_multi)
-    monkeypatch.setitem(api.state, "G", api.to_simple_graph(G_multi))
+    store = RegionStore(pull_fn=fail_pull, region_dir=tmp_path, background=False)
+    # Madison's real radius, so nearby cities count as covered like in the app
+    store.add_permanent(api.MADISON_ID, "Testville", LAT0 + 4.5 * STEP, LON0 + 4.5 * STEP, 80467,
+                        G_multi, api.to_simple_graph(G_multi))
+    monkeypatch.setitem(api.state, "regions", store)
+    return store
+
+
+@pytest.fixture
+def client(store):
     return TestClient(api.app)
+
+
+def fail_pull(lat, lon, radius_m):
+    raise AssertionError("tests must not pull from OSM")
 
 
 def corner(i, j):
@@ -111,3 +124,60 @@ def test_frontend_is_served(client):
     assert r.status_code == 200
     assert "Fantasy Trail" in r.text
     assert client.get("/app.js").status_code == 200
+
+
+# --- Regions ---
+
+def test_route_in_region_not_ready_is_409(client, store):
+    r = Region("busy", "Busytown", LAT0, LON0, 2000)
+    r.status = PREPARING
+    store.regions["busy"] = r
+    s = corner(4, 4)
+    resp = client.post("/route", json={
+        "start_lat": s["lat"], "start_lon": s["lon"], "target_distance_m": 1200, "region_id": "busy",
+    })
+    assert resp.status_code == 409
+
+
+def test_route_in_unknown_region_is_404(client):
+    s = corner(4, 4)
+    resp = client.post("/route", json={
+        "start_lat": s["lat"], "start_lon": s["lon"], "target_distance_m": 1200, "region_id": "atlantis",
+    })
+    assert resp.status_code == 404
+
+
+def test_point_outside_region_is_400(client):
+    resp = client.post("/route", json={"start_lat": 44.0, "start_lon": -89.4, "target_distance_m": 1200})
+    assert resp.status_code == 400
+    assert "Testville" in resp.json()["detail"]
+
+
+def test_target_over_region_cap_is_400(client, store):
+    store.get(api.MADISON_ID).max_target_m = 1000
+    s = corner(4, 4)
+    resp = client.post("/route", json={"start_lat": s["lat"], "start_lon": s["lon"], "target_distance_m": 1200})
+    assert resp.status_code == 400
+    assert "up to 1km" in resp.json()["detail"]
+
+
+def test_region_endpoints(client):
+    # A point inside the permanent region reuses it
+    resp = client.post("/regions", json={"lat": LAT0 + 4.5 * STEP, "lon": LON0 + 4.5 * STEP, "name": "Nearby"})
+    assert resp.status_code == 200
+    assert resp.json()["id"] == api.MADISON_ID
+    assert client.get(f"/regions/{api.MADISON_ID}").json()["status"] == "ready"
+    assert client.get("/regions/nope").status_code == 404
+
+
+def test_geocode_endpoint(client, monkeypatch):
+    monkeypatch.setattr(api, "geocode_us", lambda q: [{"name": "Ann Arbor, Michigan", "lat": 42.28, "lon": -83.74}])
+    resp = client.get("/geocode", params={"q": "ann arbor"})
+    assert resp.json()[0]["name"] == "Ann Arbor, Michigan"
+
+
+def test_geocode_failure_is_502(client, monkeypatch):
+    def boom(q):
+        raise ConnectionError("down")
+    monkeypatch.setattr(api, "geocode_us", boom)
+    assert client.get("/geocode", params={"q": "x"}).status_code == 502
